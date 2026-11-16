@@ -1597,23 +1597,28 @@ void View::drawTransit() {
 void View::drawMiniBoard() {
     TTF_Font *font = miniBoardFont ? miniBoardFont : mapFont;
     const int ROWS = 4;
+    const int PAGE_SECONDS = 8;
 
     std::vector<Departure> board = transit->snapshot();
     if(board.empty()) {
         return;
     }
-    if((int)board.size() > ROWS) {
-        board.resize(ROWS);
-    }
+
+    // page through the whole board, four rows at a time
+    int pages = ((int)board.size() + ROWS - 1) / ROWS;
+    long secs = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    int pageIndex = (int)((secs / PAGE_SECONDS) % pages);
+    size_t firstRow = pageIndex * ROWS;
+    size_t rows = std::min((size_t)ROWS, board.size() - firstRow);
 
     int charW = 0, fontH = 0;
     TTF_SizeUTF8(font, "M", &charW, &fontH);
     int pad = PAD * pixel_ratio;
     int rowH = fontH + pad / 2;
 
-    const int numChars = 2, badgeChars = 5, destChars = 20, minsChars = 7;
-    int boxW = (numChars + badgeChars + destChars + minsChars + 3) * charW + 2 * pad;
-    int boxH = (int)board.size() * rowH + 2 * pad;
+    const int numChars = 3, badgeChars = 5, destChars = 18, stopChars = 3, minsChars = 7;
+    int boxW = (numChars + badgeChars + destChars + stopChars + minsChars + 4) * charW + 2 * pad;
+    int boxH = ROWS * rowH + 2 * pad;
     int left = screen_width - boxW - pad;
     int top = screen_height - boxH - pad;
 
@@ -1625,15 +1630,26 @@ void View::drawMiniBoard() {
     auto now = std::chrono::steady_clock::now();
     int y = top + pad;
 
-    for(size_t i = 0; i < board.size(); i++) {
-        const Departure &dep = board[i];
+    // page indicator, top right of the panel
+    if(pages > 1) {
+        std::string pageText = std::to_string(pageIndex + 1) + "-" + std::to_string(pages);
+        int w = 0, h = 0;
+        TTF_SizeUTF8(font, pageText.c_str(), &w, &h);
+        text.setColor(style.grey);
+        text.setPosition(left + boxW - pad - w, top - h);  // just above the panel
+        text.setText(dotMatrixText(font, pageText));
+        text.draw(renderer);
+    }
+
+    for(size_t i = 0; i < rows; i++) {
+        const Departure &dep = board[firstRow + i];
         int x = left + pad;
 
         text.setColor(style.grey);
         text.setPosition(x, y);
-        text.setText(dotMatrixText(font, std::to_string(i + 1)));
+        text.setText(dotMatrixText(font, std::to_string(firstRow + i + 1)));
         text.draw(renderer);
-        x += (numChars + 1) * charW;
+        x += numChars * charW;
 
         SDL_Color badge = lineBadgeColor(dep);
         std::string lineText = dep.line == "Suffragette" ? "Suff" : fitText(dep.line, badgeChars - 1);
@@ -1649,6 +1665,19 @@ void View::drawMiniBoard() {
         text.setText(dotMatrixText(font, fitText(dep.destination, destChars)));
         text.draw(renderer);
         x += (destChars + 1) * charW;
+
+        // stop code, as on the map labels (stations get "stn")
+        std::string code = dep.stopIndicator;
+        if(code.compare(0, 5, "Stop ") == 0) {
+            code = code.substr(5);
+        } else {
+            code = "stn";
+        }
+        text.setColor(style.grey);
+        text.setPosition(x, y);
+        text.setText(dotMatrixText(font, fitText(code, stopChars)));
+        text.draw(renderer);
+        x += (stopChars + 1) * charW;
 
         for(size_t j = 0; j < dep.arrivals.size() && j < 2; j++) {
             int mins = std::chrono::duration_cast<std::chrono::seconds>(dep.arrivals[j] - now).count() / 60;
