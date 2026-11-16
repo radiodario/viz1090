@@ -43,6 +43,16 @@ struct StopMarker {
     std::vector<std::pair<std::string, std::chrono::steady_clock::time_point>> next;  // (line, arrival)
 };
 
+// A bus on the map: position estimated from TfL arrival predictions along
+// its route (TfL doesn't publish live bus GPS).
+struct BusMarker {
+    std::string line;
+    std::string vehicleId;
+    double lat;
+    double lon;
+    float heading;  // degrees from north, along the route
+};
+
 // A walking route from home to a stop, fetched on demand.
 struct WalkRoute {
     enum State { NONE, PENDING, READY, FAILED };
@@ -64,6 +74,9 @@ public:
 
     // Thread-safe copy of the stops with their upcoming arrivals.
     std::vector<StopMarker> stopMarkers();
+
+    // Estimated positions of buses on the nearby lines, right now.
+    std::vector<BusMarker> busMarkers();
 
     // Walking route from home to a point; requestWalkRoute fetches it in the background.
     void requestWalkRoute(double toLat, double toLon);
@@ -109,6 +122,23 @@ private:
     std::vector<Departure> departures;
     std::vector<StopMarker> markers;
     std::map<std::string, WalkRoute> routes;
+
+    // route geometry and live vehicle predictions, for bus positions
+    struct RoutePoint {
+        std::string id;
+        double lat;
+        double lon;
+    };
+    struct Vehicle {
+        std::string line;
+        std::string vehicleId;
+        // upcoming stops in order: (stop id, predicted arrival)
+        std::vector<std::pair<std::string, std::chrono::steady_clock::time_point>> next;
+    };
+    std::map<std::string, std::vector<std::vector<RoutePoint>>> lineSequences;  // line id -> stop sequences
+    std::vector<std::string> sequencesToFetch;
+    std::vector<Vehicle> vehicles;
+    void fetchRouteSequences();
     std::string lastError;
     std::chrono::steady_clock::time_point lastUpdate;
     bool haveUpdate;

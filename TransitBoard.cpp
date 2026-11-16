@@ -23,7 +23,8 @@ static const int STOPS_RETRY_S = 15;
 static const size_t ARRIVALS_KEPT = 5;  // per row, so countdowns keep the row populated
 static const size_t MARKER_ARRIVALS_KEPT = 4;
 static const int WALK_LOOKUPS_PER_CYCLE = 10;  // spread journey-planner calls out
-static const int MAX_WALK_MINUTES = 15;  // stops further than this on foot are ignored
+static const int MAX_WALK_MINUTES = 15;
+static const int SEQUENCES_PER_CYCLE = 64;    // route geometry requests per refresh (all, first time)  // stops further than this on foot are ignored
 
 // Walking estimate: straight-line distance plus 25% for real streets, at ~80 m/min.
 static int walkMinutesFor(double meters) {
@@ -104,6 +105,7 @@ void TransitBoard::run() {
     while(running) {
         fetchArrivals();
         refineWalkTimes();
+        fetchRouteSequences();
         sleepFor(ARRIVALS_INTERVAL_S);
     }
 }
@@ -216,6 +218,11 @@ bool TransitBoard::fetchStops() {
     std::lock_guard<std::mutex> guard(lock);
     stops = found;
     lineIds.assign(lines.begin(), lines.end());
+    sequencesToFetch.clear();
+    for(const auto &id : lineIds) {
+        sequencesToFetch.push_back(id + "/inbound");
+        sequencesToFetch.push_back(id + "/outbound");
+    }
     lastError = found.empty() ? "no stops found" : "";
     return !found.empty();
 }
@@ -253,9 +260,20 @@ bool TransitBoard::fetchArrivals() {
     // stop id -> upcoming (line, arrival), for the map
     std::map<std::string, std::vector<std::pair<std::string, Clock::time_point>>> byStop;
 
+    std::map<std::string, Vehicle> byVehicle;
+
     try {
         json doc = json::parse(body);
         for(const auto &a : doc) {
+            // every prediction, for estimating where each bus is
+            std::string vehicleId = a.value("vehicleId", "");
+            if(!vehicleId.empty() && a.value("modeName", "") == "bus") {
+                Vehicle &v = byVehicle[vehicleId];
+                v.vehicleId = vehicleId;
+                v.line = a.value("lineId", "");
+                v.next.push_back(std::make_pair(a.value("naptanId", ""), fetchedAt + std::chrono::seconds(a.value("timeToStation", 0))));
+            }
+
             auto it = stopById.find(a.value("naptanId", ""));
             if(it == stopById.end()) {
                 continue;
@@ -333,7 +351,21 @@ bool TransitBoard::fetchArrivals() {
         stopList.push_back(m);
     }
 
+    std::vector<Vehicle> vehicleList;
+    for(auto &kv : byVehicle) {
+        Vehicle &v = kv.second;
+        std::sort(v.next.begin(), v.next.end(),
+                  [](const std::pair<std::string, Clock::time_point> &a,
+                     const std::pair<std::string, Clock::time_point> &b) { return a.second < b.second; });
+        if(v.next.size() > 3) {
+            v.next.resize(3);
+        }
+        vehicleList.push_back(v);
+    }
+
     std::lock_guard<std::mutex> guard(lock);
+    fprintf(stderr, "transit: %zu vehicles, %zu lines with routes\n", vehicleList.size(), lineSequences.size());
+    vehicles = vehicleList;
     markers = stopList;
     departures = board;
     lastUpdate = fetchedAt;
@@ -458,6 +490,131 @@ void TransitBoard::refineWalkTimes() {
     if(changed) {
         saveWalkCache();
     }
+}
+
+// Ordered stop lists for each line and direction, fetched a few at a time.
+void TransitBoard::fetchRouteSequences() {
+    std::vector<std::string> todo;
+    {
+        std::lock_guard<std::mutex> guard(lock);
+        while(!sequencesToFetch.empty() && (int)todo.size() < SEQUENCES_PER_CYCLE) {
+            todo.push_back(sequencesToFetch.back());
+            sequencesToFetch.pop_back();
+        }
+    }
+
+    for(const auto &lineDir : todo) {
+        if(!running) {
+            return;
+        }
+        long code;
+        std::string line = lineDir.substr(0, lineDir.find('/'));
+        std::string direction = lineDir.substr(lineDir.find('/') + 1);
+        std::string body = httpGet(std::string(TFL_BASE) + "/Line/" + line + "/Route/Sequence/" + direction, &code);
+        if(code != 200) {
+            continue;  // no positions for this line; the board still works
+        }
+        try {
+            json doc = json::parse(body);
+            std::vector<std::vector<RoutePoint>> seqs;
+            for(const auto &seq : doc.at("stopPointSequences")) {
+                std::vector<RoutePoint> points;
+                for(const auto &sp : seq.at("stopPoint")) {
+                    RoutePoint p;
+                    p.id = sp.value("id", "");
+                    p.lat = sp.value("lat", 0.0);
+                    p.lon = sp.value("lon", 0.0);
+                    points.push_back(p);
+                }
+                seqs.push_back(points);
+            }
+            std::lock_guard<std::mutex> guard(lock);
+            auto &all = lineSequences[line];
+            all.insert(all.end(), seqs.begin(), seqs.end());
+        } catch(const std::exception &) {
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    }
+}
+
+// Place each bus between the stop it last passed and the next one, by how
+// long it has left to the next stop compared with that hop's travel time.
+std::vector<BusMarker> TransitBoard::busMarkers() {
+    std::vector<Vehicle> vs;
+    std::map<std::string, std::vector<std::vector<RoutePoint>>> seqs;
+    {
+        std::lock_guard<std::mutex> guard(lock);
+        vs = vehicles;
+        seqs = lineSequences;
+    }
+
+    Clock::time_point now = Clock::now();
+    std::vector<BusMarker> out;
+
+    for(const Vehicle &v : vs) {
+        // drop stops it has already reached
+        size_t first = 0;
+        while(first < v.next.size() && v.next[first].second < now) {
+            first++;
+        }
+        if(first >= v.next.size()) {
+            continue;
+        }
+        const std::string &nextId = v.next[first].first;
+        std::string afterId = first + 1 < v.next.size() ? v.next[first + 1].first : "";
+
+        auto lineIt = seqs.find(v.line);
+        if(lineIt == seqs.end()) {
+            continue;
+        }
+
+        const RoutePoint *prev = NULL;
+        const RoutePoint *next = NULL;
+        for(const auto &seq : lineIt->second) {
+            for(size_t i = 1; i < seq.size(); i++) {
+                if(seq[i].id != nextId) {
+                    continue;
+                }
+                // with branches, prefer the sequence that continues to the stop after
+                bool continues = afterId.empty();
+                for(size_t j = i + 1; j < seq.size() && !continues; j++) {
+                    continues = seq[j].id == afterId;
+                }
+                if(continues || !next) {
+                    prev = &seq[i - 1];
+                    next = &seq[i];
+                }
+                break;
+            }
+            if(next && prev) {
+                break;
+            }
+        }
+        if(!next || !prev) {
+            continue;
+        }
+
+        // hop time: the gap to the following stop is a fair stand-in
+        float hop = 90.0f;
+        if(first + 1 < v.next.size()) {
+            hop = std::chrono::duration_cast<std::chrono::seconds>(v.next[first + 1].second - v.next[first].second).count();
+            hop = std::max(30.0f, std::min(180.0f, hop));
+        }
+        float toNext = std::chrono::duration_cast<std::chrono::milliseconds>(v.next[first].second - now).count() / 1000.0f;
+        float back = std::max(0.0f, std::min(1.0f, toNext / hop));  // 0 = at next stop, 1 = at previous
+
+        BusMarker m;
+        m.line = v.line;
+        std::transform(m.line.begin(), m.line.end(), m.line.begin(), ::toupper);
+        m.vehicleId = v.vehicleId;
+        m.lat = next->lat + (prev->lat - next->lat) * back;
+        m.lon = next->lon + (prev->lon - next->lon) * back;
+        float dx = (next->lon - prev->lon) * cos(next->lat * M_PI / 180.0);
+        float dy = next->lat - prev->lat;
+        m.heading = fmodf(atan2f(dx, dy) * 180.0f / M_PI + 360.0f, 360.0f);
+        out.push_back(m);
+    }
+    return out;
 }
 
 static std::string routeKey(double lat, double lon) {

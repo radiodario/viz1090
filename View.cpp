@@ -1301,6 +1301,7 @@ void View::draw() {
     drawScaleBars();
     drawWalkRoute();
     drawTransitStops();
+    drawBuses();
 
     if(appData->connected) {
         for(int i = 0; i < 8; i++) {
@@ -1694,6 +1695,49 @@ float View::stopArrowHeading(const StopMarker &stop) {
     return heading;
 }
 
+// Buses as small red rectangles along their route, with the line number.
+void View::drawBuses() {
+    if(!transit || maxDist > 8.0f) {
+        return;
+    }
+
+    float len = 4.0f * screen_uiscale;  // half length
+    float wid = 1.8f * screen_uiscale;  // half width
+    SDL_Color body = {220, 36, 31, 255};
+    SDL_Color edge = {255, 200, 190, 255};
+
+    Label text;
+    text.setFont(stopNameFont ? stopNameFont : mapFont);
+    text.setColor(style.white);
+
+    for(const BusMarker &bus : transit->busMarkers()) {
+        float dx, dy;
+        int x, y;
+        pxFromLonLat(&dx, &dy, bus.lon, bus.lat);
+        screenCoords(&x, &y, dx, dy);
+        if(outOfBounds(x, y)) {
+            continue;
+        }
+
+        float hx = sin(bus.heading * M_PI / 180.0f);
+        float hy = -cos(bus.heading * M_PI / 180.0f);
+        Sint16 vx[4], vy[4];
+        float cx[4] = {len, len, -len, -len};
+        float cy[4] = {-wid, wid, wid, -wid};
+        for(int i = 0; i < 4; i++) {
+            // rotate: along = heading, across = perpendicular
+            vx[i] = (Sint16)(x + cx[i] * hx - cy[i] * hy);
+            vy[i] = (Sint16)(y + cx[i] * hy + cy[i] * hx);
+        }
+        filledPolygonRGBA(renderer, vx, vy, 4, body.r, body.g, body.b, SDL_ALPHA_OPAQUE);
+        polygonRGBA(renderer, vx, vy, 4, edge.r, edge.g, edge.b, SDL_ALPHA_OPAQUE);
+
+        text.setPosition(x + (int)len + screen_uiscale, y - (int)len);
+        text.setText(bus.line);
+        text.draw(renderer);
+    }
+}
+
 // Walking route from home to the tapped stop, with its time and distance.
 void View::drawWalkRoute() {
     if(!transit || !stopSelected) {
@@ -1769,7 +1813,14 @@ void View::drawTransitStops() {
 
     // stations first, then nearest stops, so they win when labels would collide
     std::vector<StopMarker> stops = transit->stopMarkers();
-    std::sort(stops.begin(), stops.end(), [](const StopMarker &a, const StopMarker &b) {
+    auto isSelected = [this](const StopMarker &m) {
+        return stopSelected && m.lat == selectedStop.lat && m.lon == selectedStop.lon;
+    };
+    // the selected stop first, then stations, then nearest
+    std::sort(stops.begin(), stops.end(), [&](const StopMarker &a, const StopMarker &b) {
+        if(isSelected(a) != isSelected(b)) {
+            return isSelected(a);
+        }
         if(a.station != b.station) {
             return a.station;
         }
@@ -1825,7 +1876,8 @@ void View::drawTransitStops() {
             boxRGBA(renderer, x - half, y - half, x + half, y + half, color.r, color.g, color.b, SDL_ALPHA_OPAQUE);
         }
 
-        if(!labels) {
+        bool selected = isSelected(stop);
+        if(!labels && !selected) {
             continue;
         }
 
@@ -1866,7 +1918,7 @@ void View::drawTransitStops() {
                 break;
             }
         }
-        if(collides) {
+        if(collides && !selected) {
             continue;
         }
         placed.push_back(box);

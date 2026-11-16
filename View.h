@@ -152,6 +152,7 @@ class View {
 		bool stopSelected;
 		StopMarker selectedStop;
 		void drawWalkRoute();
+		void drawBuses();               // estimated bus positions
 		bool miniBoard;                 // toggled with B
 		TTF_Font *miniBoardFont;
 		TTF_Font *stopNameFont;         // small type for stop names on the map
