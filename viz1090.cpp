@@ -198,6 +198,7 @@ int main(int argc, char **argv) {
 
     signal(SIGINT, SIG_DFL);  // reset signal handler - bit extra safety
     signal(SIGUSR1, [](int) { viewSnapshotRequested = 1; });  // pkill -USR1 viz1090 saves a frame
+    signal(SIGUSR2, [](int) { viewNextSegmentRequested = 1; });  // pkill -USR2 viz1090: next weather segment
 
     int go;
  

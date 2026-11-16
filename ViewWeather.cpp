@@ -435,9 +435,101 @@ static void putTempCentred(SDL_Renderer *r, TTF_Font *font, float t, int cx, int
 // Segments
 //
 
-enum WeatherSegment { SEG_NOW, SEG_NEXT_HOUR, SEG_12H, SEG_48H, SEG_WEEK, SEG_SUN_MOON, SEG_RADAR, SEG_COUNT };
-static const char *SEGMENT_NAMES[SEG_COUNT] = {"Current Conditions", "Next Hour", "Next 12 Hours", "48 Hours", "Extended Forecast", "Sun and Moon", "Radar"};
-static const int SEGMENT_SECONDS[SEG_COUNT] = {12, 10, 10, 10, 10, 10, 16};
+enum WeatherSegment { SEG_NOW, SEG_TEXT, SEG_NEXT_HOUR, SEG_12H, SEG_48H, SEG_WEEK, SEG_REGIONAL, SEG_RADAR, SEG_SUN_MOON, SEG_ALMANAC, SEG_COUNT };
+static const char *SEGMENT_NAMES[SEG_COUNT] = {"Current Conditions", "Local Forecast", "Next Hour", "Next 12 Hours", "48 Hours",
+                                                "Extended Forecast", "Regional Conditions", "Radar", "Sun and Moon", "Almanac"};
+static const int SEGMENT_SECONDS[SEG_COUNT] = {12, 15, 10, 10, 10, 10, 12, 16, 10, 10};
+
+//
+// Text forecast, written from the hourly data
+//
+
+struct ForecastPeriod {
+    std::string name;
+    time_t start, end;
+    bool night;
+};
+
+static std::string forecastSentence(const WeatherSnapshot &w, const ForecastPeriod &p) {
+    std::vector<const WeatherSlot *> slots;
+    for(const WeatherSlot &s : w.hours) {
+        if(s.time >= p.start && s.time < p.end) {
+            slots.push_back(&s);
+        }
+    }
+    if(slots.empty()) {
+        return "";
+    }
+    int code = 0, prob = 0;
+    float tMin = 1e9f, tMax = -1e9f, wMin = 1e9f, wMax = 0, rain = 0;
+    int windDir = 0;
+    for(const WeatherSlot *s : slots) {
+        code = std::max(code, s->code);  // higher WMO codes are the more notable weather
+        prob = std::max(prob, s->precipProb);
+        tMin = std::min(tMin, s->temp);
+        tMax = std::max(tMax, s->temp);
+        wMin = std::min(wMin, s->windMph);
+        if(s->windMph >= wMax) {
+            wMax = s->windMph;
+            windDir = s->windDir;
+        }
+        rain += s->precip;
+    }
+    auto round5 = [](float v) { return std::max(5, (int)lroundf(v / 5.0f) * 5); };
+    const char *names[] = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"};
+    std::string dir = names[((windDir + 22) / 45) % 8];
+
+    std::string out = weatherDescription(code) + ". ";
+    out += std::string(p.night ? "Low around " : "High around ") + std::to_string((int)lroundf(p.night ? tMin : tMax)) + "\xC2\xB0" "C. ";
+    int a = round5(wMin), b = round5(wMax);
+    out += "Winds " + dir + (a == b ? " around " + std::to_string(a) : " at " + std::to_string(a) + " to " + std::to_string(b)) + " mph. ";
+    if(prob >= 20) {
+        out += "Chance of rain " + std::to_string(prob) + "%. ";
+        if(rain >= 0.5f) {
+            out += "Rainfall around " + std::to_string((int)lroundf(rain)) + " mm.";
+        }
+    } else {
+        out += "Staying dry.";
+    }
+    return out;
+}
+
+static std::vector<std::pair<std::string, std::string>> forecastText(const WeatherSnapshot &w, time_t now) {
+    struct tm lt = *localtime(&now);
+    auto at = [&](int dayOffset, int hour) {
+        struct tm t = lt;
+        t.tm_mday += dayOffset;
+        t.tm_hour = hour;
+        t.tm_min = 0;
+        t.tm_sec = 0;
+        t.tm_isdst = -1;
+        return mktime(&t);
+    };
+    std::vector<ForecastPeriod> periods;
+    if(lt.tm_hour >= 5 && lt.tm_hour < 17) {
+        periods.push_back({"Today", now, at(0, 18), false});
+        periods.push_back({"Tonight", at(0, 18), at(1, 6), true});
+        periods.push_back({"Tomorrow", at(1, 6), at(1, 18), false});
+    } else {
+        int base = lt.tm_hour >= 17 ? 1 : 0;  // after midnight, "tomorrow" is today
+        periods.push_back({"Tonight", now, at(base, 6), true});
+        periods.push_back({base ? "Tomorrow" : "Today", at(base, 6), at(base, 18), false});
+        periods.push_back({base ? "Tomorrow night" : "Tonight", at(base, 18), at(base + 1, 6), true});
+    }
+    std::vector<std::pair<std::string, std::string>> out;
+    for(const ForecastPeriod &p : periods) {
+        std::string text = forecastSentence(w, p);
+        if(!text.empty()) {
+            out.push_back(std::make_pair(p.name, text));
+        }
+    }
+    return out;
+}
+
+static std::string upper(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(), ::toupper);
+    return s;
+}
 
 void View::nextWeatherSegment(int dir) {
     weatherSegment = ((weatherSegment + dir) % SEG_COUNT + SEG_COUNT) % SEG_COUNT;
@@ -472,7 +564,8 @@ void View::drawWeather() {
 
     // header: clock, then this segment's title; date on the right
     TTF_Font *clockFont = transitClockFont ? transitClockFont : weatherHeadFont;
-    TTF_Font *titleFont = weatherHeadFont;
+    // same font, size and colour as the departures board's "Departures"
+    TTF_Font *titleFont = transitHeadFont ? transitHeadFont : weatherHeadFont;
     int headH = std::max(fontHeight(titleFont), fontHeight(clockFont));
     int tickerH = fontHeight(weatherBodyFont) + m;
     int progressH = std::max(2, H / 300);
@@ -480,11 +573,13 @@ void View::drawWeather() {
 
     if(weatherSegment == SEG_RADAR) {
         drawWeatherRadar(area.y, area.y + area.h + m);
+    } else if(weatherSegment == SEG_REGIONAL && w.valid) {
+        drawWeatherRegional(w, area.y, area.y + area.h + m, anim);
     }
 
     int hx = m;
     hx += putText(renderer, clockFont, clockString(nowWall), hx, m, WHITE) + 2 * m;
-    putText(renderer, titleFont, SEGMENT_NAMES[weatherSegment], hx, m + headH - fontHeight(titleFont), WHITE);
+    putText(renderer, titleFont, SEGMENT_NAMES[weatherSegment], hx, m + headH - fontHeight(titleFont), ORANGE);
     if(weatherSegment == SEG_RADAR) {
         drawRadarLegend(W - m, m, headH);
     } else {
@@ -500,22 +595,24 @@ void View::drawWeather() {
     lineRGBA(renderer, 0, tickerY, W, tickerY, PANEL_EDGE.r, PANEL_EDGE.g, PANEL_EDGE.b, 255);
     if(w.valid) {
         std::vector<std::string> lines;
-        lines.push_back(weatherDescription(w.code));
+        lines.push_back("Now " + weatherDescription(w.code) + ", " + tempString(w.temp) + "\xC2\xB0" "C");
         lines.push_back("Wind " + compass(w.windDir) + " " + std::to_string((int)lroundf(w.windMph)) + " mph");
         lines.push_back("Humidity " + std::to_string(w.humidity) + "%");
         if(!w.days.empty()) {
-            lines.push_back("Sunrise " + clockString(w.days[0].sunrise) + "  Sunset " + clockString(w.days[0].sunset));
+            lines.push_back("Sunrise " + clockString(w.days[0].sunrise) + ", sunset " + clockString(w.days[0].sunset));
             if(w.days[0].precipProb >= 0) {
                 lines.push_back("Chance of rain today " + std::to_string(w.days[0].precipProb) + "%");
             }
         }
-        if(weatherSegment == SEG_RADAR) {
-            lines.assign(1, "Radar: RainViewer, last two hours");
+        if(w.days.size() > 1) {
+            lines.push_back("Tomorrow " + weatherDescription(w.days[1].code) + ", high " + tempString(w.days[1].tempMax) + "\xC2\xB0" "C");
         }
-        long secs = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
-        std::string line = lines[(secs / 4) % lines.size()];
-        std::transform(line.begin(), line.end(), line.begin(), ::toupper);
-        putText(renderer, weatherBodyFont, line, m, tickerY + m / 2, WHITE);
+        lines.push_back("Radar: RainViewer   Forecast: Open-Meteo");
+        std::string text;
+        for(const std::string &l : lines) {
+            text += (text.empty() ? "" : "   \xE2\x80\xA2   ") + upper(l);
+        }
+        drawTicker(text, tickerY + m / 2, anim);
     }
 
     // progress through this segment
@@ -575,6 +672,99 @@ void View::drawWeather() {
                 putText(renderer, weatherBodyFont, row.value, rRight - textWidth(weatherBodyFont, row.value), ry, WHITE);
             }
             ry += rowH;
+        }
+        break;
+    }
+
+    case SEG_TEXT: {
+        // written forecast for the next few periods, word-wrapped
+        int y = area.y;
+        int lineH = fontHeight(weatherBodyFont);
+        for(const auto &para : forecastText(w, nowWall)) {
+            std::string text = upper(para.first) + "... " + upper(para.second);
+            std::string line;
+            std::vector<std::string> words;
+            size_t pos = 0;
+            while(pos < text.size()) {
+                size_t sp = text.find(' ', pos);
+                if(sp == std::string::npos) {
+                    sp = text.size();
+                }
+                words.push_back(text.substr(pos, sp - pos));
+                pos = sp + 1;
+            }
+            for(size_t i = 0; i < words.size(); i++) {
+                std::string candidate = line.empty() ? words[i] : line + " " + words[i];
+                if(textWidth(weatherBodyFont, candidate) > area.w && !line.empty()) {
+                    putText(renderer, weatherBodyFont, line, area.x, y, WHITE);
+                    y += lineH;
+                    line = words[i];
+                } else {
+                    line = candidate;
+                }
+            }
+            if(!line.empty()) {
+                putText(renderer, weatherBodyFont, line, area.x, y, WHITE);
+                y += lineH;
+            }
+            y += lineH / 2;
+            if(y > area.y + area.h - lineH) {
+                break;
+            }
+        }
+        break;
+    }
+
+    case SEG_REGIONAL:
+        // drawn under the header above
+        break;
+
+    case SEG_ALMANAC: {
+        // sunrise and sunset, today and tomorrow
+        int labelX = area.x;
+        int col1 = area.x + area.w * 45 / 100;
+        int col2 = area.x + area.w * 80 / 100;
+        int y = area.y;
+        int rowH = fontHeight(weatherBodyFont) + m / 2;
+        if(w.days.size() > 1) {
+            char d0[16], d1[16];
+            strftime(d0, sizeof(d0), "%A", localtime(&w.days[0].date));
+            strftime(d1, sizeof(d1), "%A", localtime(&w.days[1].date));
+            putCentred(renderer, weatherBodyFont, d0, col1, y, ORANGE);
+            putCentred(renderer, weatherBodyFont, d1, col2, y, ORANGE);
+            y += rowH;
+            putText(renderer, weatherBodyFont, "Sunrise", labelX, y, GREY);
+            putCentred(renderer, weatherBodyFont, clockString(w.days[0].sunrise), col1, y, WHITE);
+            putCentred(renderer, weatherBodyFont, clockString(w.days[1].sunrise), col2, y, WHITE);
+            y += rowH;
+            putText(renderer, weatherBodyFont, "Sunset", labelX, y, GREY);
+            putCentred(renderer, weatherBodyFont, clockString(w.days[0].sunset), col1, y, WHITE);
+            putCentred(renderer, weatherBodyFont, clockString(w.days[1].sunset), col2, y, WHITE);
+            y += rowH + m;
+        }
+        lineRGBA(renderer, area.x, y, area.x + area.w, y, PANEL_EDGE.r, PANEL_EDGE.g, PANEL_EDGE.b, 255);
+        y += m;
+
+        // the next four moon phases
+        putText(renderer, weatherBodyFont, "Moon phases", labelX, y, ORANGE);
+        y += rowH;
+        struct Phase { const char *name; double at; time_t when; };
+        std::vector<Phase> phases = {{"New", 0.0, 0}, {"First", 0.25, 0}, {"Full", 0.5, 0}, {"Last", 0.75, 0}};
+        for(Phase &ph : phases) {
+            ph.when = nextPhase(nowWall, ph.at);
+        }
+        std::sort(phases.begin(), phases.end(), [](const Phase &a, const Phase &b) { return a.when < b.when; });
+        int colW = area.w / 4;
+        int discArea = area.y + area.h - y - 2 * rowH;
+        int cells = 16;
+        int px = std::max(1, std::min(colW * 85 / 100, discArea) / cells);
+        for(int i = 0; i < 4; i++) {
+            int cx = area.x + colW * i + colW / 2;
+            putCentred(renderer, weatherBodyFont, phases[i].name, cx, y, WHITE);
+            drawMoonDisc(renderer, cx, y + rowH + cells * px / 2, cells, px, phases[i].at == 0.0 ? 0.0001 : phases[i].at);
+            char date[16];
+            strftime(date, sizeof(date), "%d %b", localtime(&phases[i].when));
+            putCentred(renderer, weatherBodyFont, date, cx, y + rowH + cells * px + m / 2, WHITE);
         }
         break;
     }
@@ -791,6 +981,98 @@ void View::drawWeather() {
 
 // Radar segment: the region around home with the last two hours of radar
 // looping over a plain base map, and a timeline of the frames.
+// A scrolling ticker line, rendered once to a texture and slid along.
+void View::drawTicker(const std::string &text, int y, float anim) {
+    TTF_Font *font = weatherBodyFont;
+    if(!font) {
+        return;
+    }
+    if(text != tickerText || !tickerTexture) {
+        if(tickerTexture) {
+            SDL_DestroyTexture(tickerTexture);
+            tickerTexture = NULL;
+        }
+        tickerText = text;
+        SDL_Surface *fg = TTF_RenderUTF8_Solid(font, text.c_str(), {255, 255, 255, 255});
+        SDL_Surface *bg = TTF_RenderUTF8_Solid(font, text.c_str(), {0, 0, 0, 255});
+        if(fg && bg) {
+            int off = std::max(1, TTF_FontHeight(font) / 14);
+            SDL_Surface *both = SDL_CreateRGBSurfaceWithFormat(0, fg->w + off, fg->h + off, 32, SDL_PIXELFORMAT_ARGB8888);
+            if(both) {
+                SDL_FillRect(both, NULL, SDL_MapRGBA(both->format, 0, 0, 0, 0));
+                SDL_Rect r = {off, off, bg->w, bg->h};
+                SDL_BlitSurface(bg, NULL, both, &r);
+                SDL_BlitSurface(fg, NULL, both, NULL);
+                tickerTexture = SDL_CreateTextureFromSurface(renderer, both);
+                tickerW = both->w;
+                tickerH = both->h;
+                SDL_FreeSurface(both);
+            }
+        }
+        if(fg) SDL_FreeSurface(fg);
+        if(bg) SDL_FreeSurface(bg);
+    }
+    if(!tickerTexture) {
+        return;
+    }
+    int gap = textWidth(font, "      ");
+    float speed = screen_width / 9.0f;  // crosses the screen in ~9 s
+    int span = tickerW + gap;
+    int x = -(int)fmodf(anim * speed, (float)span);
+    for(; x < screen_width; x += span) {
+        SDL_Rect dest = {x, y, tickerW, tickerH};
+        SDL_RenderCopy(renderer, tickerTexture, NULL, &dest);
+    }
+}
+
+// Regional map: nearby cities with their temperature and conditions.
+void View::drawWeatherRegional(const WeatherSnapshot &w, int top, int bottom, float anim) {
+    float savedDist = maxDist, savedLat = centerLat, savedLon = centerLon;
+    maxDist = 300.0f;
+    centerLat = appData->modes.fUserLat;
+    centerLon = appData->modes.fUserLon;
+
+    float screen_lat_min, screen_lat_max, screen_lon_min, screen_lon_max;
+    latLonFromScreenCoords(&screen_lat_min, &screen_lon_min, 0, 0);
+    latLonFromScreenCoords(&screen_lat_max, &screen_lon_max, screen_width, screen_height);
+    drawLinesRecursive(&(map.root), std::min(screen_lat_min, screen_lat_max), std::max(screen_lat_min, screen_lat_max),
+                       screen_lon_min, screen_lon_max, SDL_Color{70, 70, 84, 255});
+
+    std::vector<SDL_Rect> placed;
+    int glyphPx = std::max(1, screen_height / 170);
+    for(const WeatherCity &city : w.cities) {
+        float dx, dy;
+        int x, y;
+        pxFromLonLat(&dx, &dy, city.lon, city.lat);
+        screenCoords(&x, &y, dx, dy);
+        int nameW = textWidth(weatherBodyFont, city.name);
+        int tempH = fontHeight(weatherHeadFont);
+        SDL_Rect box = {x - nameW / 2, y - fontHeight(weatherBodyFont), nameW, fontHeight(weatherBodyFont) + tempH};
+        if(box.y < top || box.y + box.h > bottom || box.x < 0 || box.x + box.w > screen_width) {
+            continue;
+        }
+        bool clash = false;
+        for(const SDL_Rect &o : placed) {
+            if(SDL_HasIntersection(&box, &o)) {
+                clash = true;
+                break;
+            }
+        }
+        if(clash) {
+            continue;
+        }
+        placed.push_back(box);
+        filledCircleRGBA(renderer, x, y, std::max(2, glyphPx), 255, 255, 255, 255);
+        putText(renderer, weatherBodyFont, city.name, x - nameW / 2, y - fontHeight(weatherBodyFont) - glyphPx, WHITE);
+        int tw = putTemp(renderer, weatherHeadFont, city.temp, x - nameW / 2, y + glyphPx, ORANGE);
+        drawWeatherGlyph(city.code, city.isDay, x - nameW / 2 + tw + 9 * glyphPx, y + glyphPx + tempH / 2, glyphPx, anim);
+    }
+
+    maxDist = savedDist;
+    centerLat = savedLat;
+    centerLon = savedLon;
+}
+
 // Light-to-heavy colour key for RainViewer's "universal blue" scheme.
 void View::drawRadarLegend(int right, int top, int height) {
     const SDL_Color keys[] = {{136, 221, 238, 255}, {0, 153, 204, 255}, {0, 102, 170, 255},

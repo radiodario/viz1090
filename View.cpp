@@ -43,6 +43,7 @@
 // Set from a SIGUSR1 handler; the next frame is saved to SNAPSHOT_PATH.
 // Lets you grab the screen remotely: pkill -USR1 viz1090
 volatile sig_atomic_t viewSnapshotRequested = 0;
+volatile sig_atomic_t viewNextSegmentRequested = 0;  // SIGUSR2: next weather segment
 static const char *SNAPSHOT_PATH = "/tmp/viz1090-snapshot.bmp";
 
 void View::presentFrame() {
@@ -264,6 +265,7 @@ void View::font_init() {
     weatherHeadFont = loadFont("font/LondonUndergroundHeavy.ttf", wu * 3 / 2);
     weatherTabFont = loadFont("font/LondonUndergroundHeavy.ttf", wu * 3 / 2);
     weatherBodyFont = loadFont("font/TerminusTTF-Bold-4.46.0.ttf", wu * 3 / 2);
+    weatherTitleFont = loadFont("font/TerminusTTF-Bold-4.46.0.ttf", wu * 5 / 2);
     weatherTextFont = loadFont("font/TerminusTTF-Bold-4.46.0.ttf", wu);
     weatherSmallFont = loadFont("font/TerminusTTF-4.46.0.ttf", wu * 4 / 5);
     if(stopNameFont) {
@@ -1327,6 +1329,10 @@ void View::draw() {
     }
 
     if(page == PAGE_WEATHER) {
+        if(viewNextSegmentRequested) {
+            viewNextSegmentRequested = 0;
+            nextWeatherSegment(1);
+        }
         drawWeather();
         presentFrame();
         lastFrameTime = elapsed(drawStartTime);
@@ -2461,6 +2467,10 @@ View::View(AppData *appData){
     weatherBigFont          = NULL;
     weatherHugeFont         = NULL;
     weatherBodyFont         = NULL;
+    weatherTitleFont        = NULL;
+    tickerTexture           = NULL;
+    tickerW                 = 0;
+    tickerH                 = 0;
     weatherSegment          = 0;
     weatherSegmentShown     = std::chrono::steady_clock::now();
     weatherHeadFont         = NULL;

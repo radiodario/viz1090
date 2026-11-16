@@ -18,6 +18,18 @@ struct WeatherSlot {
     int precipProb;       // %, -1 if unknown
     float precip;         // mm
     bool isDay;
+    float windMph = 0;
+    int windDir = 0;
+};
+
+// a city on the regional map
+struct WeatherCity {
+    std::string name;
+    double lat;
+    double lon;
+    float temp;
+    int code;
+    bool isDay;
 };
 
 struct WeatherDay {
@@ -47,6 +59,7 @@ struct WeatherSnapshot {
     std::vector<WeatherSlot> quarterHours;  // next hour, 15-minute steps
     std::vector<WeatherSlot> hours;         // next 48 hours
     std::vector<WeatherDay> days;           // next 7 days
+    std::vector<WeatherCity> cities;        // regional map
     time_t fetched = 0;
 };
 
@@ -62,6 +75,7 @@ public:
 private:
     void run();
     bool fetch();
+    void fetchRegional(WeatherSnapshot *w);
 
     double lat;
     double lon;

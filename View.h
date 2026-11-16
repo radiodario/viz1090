@@ -46,6 +46,7 @@
 #include <string>
 
 extern volatile sig_atomic_t viewSnapshotRequested;
+extern volatile sig_atomic_t viewNextSegmentRequested;
 
 
 //defs - should all move to config file setup
@@ -148,6 +149,12 @@ class View {
 		void drawWeatherGlyph(int code, bool isDay, int cx, int cy, int px, float anim = -1);
 		void drawWeatherRadar(int top, int bottom);  // radar segment of the weather page
 		void drawRadarLegend(int right, int top, int height);
+		void drawWeatherRegional(const WeatherSnapshot &w, int top, int bottom, float anim);
+		void drawTicker(const std::string &text, int y, float anim);
+		SDL_Texture *tickerTexture;
+		std::string tickerText;
+		int tickerW, tickerH;
+		TTF_Font *weatherTitleFont;     // segment titles
 		int weatherSegment;              // which rotating segment is showing
 		std::chrono::steady_clock::time_point weatherSegmentShown;
 		void nextWeatherSegment(int dir);

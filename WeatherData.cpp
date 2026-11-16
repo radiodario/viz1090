@@ -101,7 +101,7 @@ bool WeatherData::fetch() {
              "https://api.open-meteo.com/v1/forecast?latitude=%.2f&longitude=%.2f"
              "&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m,wind_direction_10m,relative_humidity_2m,is_day,dew_point_2m,pressure_msl,visibility,cloud_cover"
              "&minutely_15=precipitation,weather_code,temperature_2m,is_day&forecast_minutely_15=4"
-             "&hourly=temperature_2m,precipitation_probability,precipitation,weather_code,is_day&forecast_hours=48"
+             "&hourly=temperature_2m,precipitation_probability,precipitation,weather_code,is_day,wind_speed_10m,wind_direction_10m&forecast_hours=48"
              "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunrise,sunset&forecast_days=7"
              "&timezone=auto&wind_speed_unit=mph",
              lat, lon);
@@ -172,6 +172,8 @@ bool WeatherData::fetch() {
             s.precip = num(h["precipitation"], i, 0);
             s.precipProb = (int)num(h["precipitation_probability"], i, -1);
             s.isDay = num(h["is_day"], i, 1) != 0;
+            s.windMph = num(h["wind_speed_10m"], i, 0);
+            s.windDir = (int)num(h["wind_direction_10m"], i, 0);
             w.hours.push_back(s);
         }
 
@@ -193,6 +195,8 @@ bool WeatherData::fetch() {
         return false;
     }
 
+    fetchRegional(&w);
+
     w.valid = true;
     w.fetched = time(NULL);
 
@@ -200,6 +204,72 @@ bool WeatherData::fetch() {
     current = w;
     lastError = "";
     return true;
+}
+
+// Current temperature and conditions for a handful of cities, for the
+// regional map, in one request (Open-Meteo takes lists of coordinates).
+void WeatherData::fetchRegional(WeatherSnapshot *w) {
+    struct City { const char *name; double lat, lon; };
+    static const City CITIES[] = {
+        {"London", 51.507, -0.128}, {"Birmingham", 52.486, -1.890}, {"Manchester", 53.481, -2.243},
+        {"Bristol", 51.455, -2.588}, {"Cardiff", 51.481, -3.179}, {"Norwich", 52.630, 1.297},
+        {"Brighton", 50.823, -0.137}, {"Southampton", 50.910, -1.404}, {"Cambridge", 52.205, 0.122},
+        {"Oxford", 51.752, -1.258}, {"Dover", 51.128, 1.313}, {"Paris", 48.857, 2.352},
+        {"Brussels", 50.850, 4.352}, {"Amsterdam", 52.370, 4.895}, {"Lille", 50.630, 3.057},
+        {"Rouen", 49.443, 1.099}, {"Plymouth", 50.376, -4.143}, {"Leeds", 53.801, -1.549},
+    };
+    const int count = sizeof(CITIES) / sizeof(CITIES[0]);
+
+    std::string lats, lons;
+    for(int i = 0; i < count; i++) {
+        char a[32], b[32];
+        snprintf(a, sizeof(a), "%s%.3f", i ? "," : "", CITIES[i].lat);
+        snprintf(b, sizeof(b), "%s%.3f", i ? "," : "", CITIES[i].lon);
+        lats += a;
+        lons += b;
+    }
+    std::string url = "https://api.open-meteo.com/v1/forecast?latitude=" + lats + "&longitude=" + lons +
+                      "&current=temperature_2m,weather_code,is_day&timezone=auto";
+
+    std::string body;
+    long code = 0;
+    CURL *curl = curl_easy_init();
+    if(!curl) {
+        return;
+    }
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, appendBody);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &body);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 20L);
+    curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "");
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "viz1090-weather");
+    CURLcode res = curl_easy_perform(curl);
+    if(res == CURLE_OK) {
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &code);
+    }
+    curl_easy_cleanup(curl);
+    if(res != CURLE_OK || code != 200) {
+        return;  // the regional map just stays empty
+    }
+
+    try {
+        json doc = json::parse(body);
+        if(!doc.is_array()) {
+            return;
+        }
+        for(int i = 0; i < count && i < (int)doc.size(); i++) {
+            const json &c = doc[i].at("current");
+            WeatherCity city;
+            city.name = CITIES[i].name;
+            city.lat = CITIES[i].lat;
+            city.lon = CITIES[i].lon;
+            city.temp = c.value("temperature_2m", 0.0f);
+            city.code = c.value("weather_code", 0);
+            city.isDay = c.value("is_day", 1) != 0;
+            w->cities.push_back(city);
+        }
+    } catch(const std::exception &) {
+    }
 }
 
 WeatherSnapshot WeatherData::snapshot() {
