@@ -147,6 +147,11 @@ class View {
 		void drawMiniBoard();           // next few departures over the map
 		float stopArrowHeading(const StopMarker &stop);  // TfL compass point snapped to the nearest road
 		std::map<std::string, float> stopHeadingCache;
+
+		// tapped stop: walking route from home is drawn on the map
+		bool stopSelected;
+		StopMarker selectedStop;
+		void drawWalkRoute();
 		bool miniBoard;                 // toggled with B
 		TTF_Font *miniBoardFont;
 		TTF_Font *stopNameFont;         // small type for stop names on the map

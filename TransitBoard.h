@@ -13,6 +13,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <map>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -42,6 +43,15 @@ struct StopMarker {
     std::vector<std::pair<std::string, std::chrono::steady_clock::time_point>> next;  // (line, arrival)
 };
 
+// A walking route from home to a stop, fetched on demand.
+struct WalkRoute {
+    enum State { NONE, PENDING, READY, FAILED };
+    State state = NONE;
+    std::vector<std::pair<double, double>> path;  // (lat, lon)
+    int minutes = 0;
+    int meters = 0;
+};
+
 class TransitBoard {
 public:
     TransitBoard();
@@ -54,6 +64,10 @@ public:
 
     // Thread-safe copy of the stops with their upcoming arrivals.
     std::vector<StopMarker> stopMarkers();
+
+    // Walking route from home to a point; requestWalkRoute fetches it in the background.
+    void requestWalkRoute(double toLat, double toLon);
+    WalkRoute walkRoute(double toLat, double toLon);
 
     // Short human-readable state, e.g. "54 stops, updated 12s ago".
     std::string status();
@@ -94,6 +108,7 @@ private:
     std::vector<std::string> lineIds;
     std::vector<Departure> departures;
     std::vector<StopMarker> markers;
+    std::map<std::string, WalkRoute> routes;
     std::string lastError;
     std::chrono::steady_clock::time_point lastUpdate;
     bool haveUpdate;

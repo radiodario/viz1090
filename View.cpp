@@ -346,10 +346,9 @@ void View::SDL_init() {
     mapTargetLat = 0;
     mapTargetMaxDist = 0;
 
-    if(fullscreen) {
-        //SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "linear");  // make the scaled rendering look smoother.
-        SDL_RenderSetLogicalSize(renderer, screen_width, screen_height);
-    }
+    // No SDL_RenderSetLogicalSize: we always draw at the renderer's native
+    // pixel size, and a logical size would make SDL rescale mouse events on
+    // top of our own pixel_ratio scaling (taps landed 2x off in fullscreen).
 }
 
 
@@ -1192,27 +1191,54 @@ void View::drawClick() {
 
 void View::registerClick(int tapcount, int x, int y) {
     if(tapcount == 1) {
+        // tap radius grows with the UI scale so it stays finger/mouse sized
+        int radius = 15 * screen_uiscale;
+        int radius2 = radius * radius;
+
         Aircraft *p = appData->aircraftList.head;
         Aircraft *selection = NULL;
+        int selectionDist = radius2;
 
         while(p) {
             if(x && y) {
-                if((p->x - x) * (p->x - x) + (p->y - y) * (p->y - y) < 900) {
-                    if(selection) {
-                        if((p->x - x) * (p->x - x) + (p->y - y) * (p->y - y) < 
-                            (selection->x - x) * (selection->x - x) + (selection->y - y) * (selection->y - y)) {
-                            selection = p;
-                        }
-                    } else {
-                        selection = p;
-                    }    
+                int d = (p->x - x) * (p->x - x) + (p->y - y) * (p->y - y);
+                if(d < selectionDist) {
+                    selection = p;
+                    selectionDist = d;
                 }
             }
 
             p = p->next;
         }
 
-        selectedAircraft = selection;
+        // stops and stations, when they're on the map
+        bool foundStop = false;
+        StopMarker nearestStop;
+        int stopDist = radius2;
+        if(transit && page == PAGE_MAP && maxDist <= 8.0f) {
+            for(const StopMarker &stop : transit->stopMarkers()) {
+                float dx, dy;
+                int sx, sy;
+                pxFromLonLat(&dx, &dy, stop.lon, stop.lat);
+                screenCoords(&sx, &sy, dx, dy);
+                int d = (sx - x) * (sx - x) + (sy - y) * (sy - y);
+                if(d < stopDist) {
+                    stopDist = d;
+                    nearestStop = stop;
+                    foundStop = true;
+                }
+            }
+        }
+
+        if(foundStop && stopDist < selectionDist) {
+            selectedStop = nearestStop;
+            stopSelected = true;
+            selectedAircraft = NULL;
+            transit->requestWalkRoute(selectedStop.lat, selectedStop.lon);
+        } else {
+            selectedAircraft = selection;
+            stopSelected = false;
+        }
     } else if(tapcount == 2) {
         mapTargetMaxDist = 0.25 * maxDist;
         animateCenterAbsolute(x, y);
@@ -1273,6 +1299,7 @@ void View::draw() {
 
     drawGeography();
     drawScaleBars();
+    drawWalkRoute();
     drawTransitStops();
 
     if(appData->connected) {
@@ -1667,6 +1694,59 @@ float View::stopArrowHeading(const StopMarker &stop) {
     return heading;
 }
 
+// Walking route from home to the tapped stop, with its time and distance.
+void View::drawWalkRoute() {
+    if(!transit || !stopSelected) {
+        return;
+    }
+
+    SDL_Color color = style.selectedColor;
+    WalkRoute route = transit->walkRoute(selectedStop.lat, selectedStop.lon);
+
+    if(route.state == WalkRoute::READY) {
+        int width = std::max(2, screen_uiscale);
+        int prevX = 0, prevY = 0;
+        for(size_t i = 0; i < route.path.size(); i++) {
+            float dx, dy;
+            int px, py;
+            pxFromLonLat(&dx, &dy, route.path[i].second, route.path[i].first);
+            screenCoords(&px, &py, dx, dy);
+            if(i > 0) {
+                thickLineRGBA(renderer, prevX, prevY, px, py, width, color.r, color.g, color.b, SDL_ALPHA_OPAQUE);
+            }
+            prevX = px;
+            prevY = py;
+        }
+    }
+
+    // ring around the chosen stop
+    float dx, dy;
+    int sx, sy;
+    pxFromLonLat(&dx, &dy, selectedStop.lon, selectedStop.lat);
+    screenCoords(&sx, &sy, dx, dy);
+    int r = 7 * screen_uiscale;
+    circleRGBA(renderer, sx, sy, r, color.r, color.g, color.b, SDL_ALPHA_OPAQUE);
+    circleRGBA(renderer, sx, sy, r + 1, color.r, color.g, color.b, SDL_ALPHA_OPAQUE);
+
+    // summary box just above the status bar
+    std::string name = selectedStop.name;
+    std::string id = selectedStop.indicator;
+    if(id.compare(0, 5, "Stop ") == 0) {
+        name += " " + id.substr(5);
+    }
+    std::string message;
+    if(route.state == WalkRoute::READY) {
+        message = name + "  " + std::to_string(route.minutes) + " min  " + std::to_string(route.meters) + " m";
+    } else if(route.state == WalkRoute::FAILED) {
+        message = name + "  no route";
+    } else {
+        message = name + "  routing...";
+    }
+    int left = PAD;
+    int top = screen_height - 2 * (messageFontHeight + PAD);
+    drawStatusBox(&left, &top, "walk", message, color);
+}
+
 // Bus stops and stations on the map. Labels with the next arrivals appear
 // once zoomed in far enough for them not to pile up.
 void View::drawTransitStops() {
@@ -1852,6 +1932,7 @@ View::View(AppData *appData){
     transitFont             = NULL;
     transitHeadFont         = NULL;
     miniBoard               = true;
+    stopSelected            = false;
     hideCursor              = false;
     miniBoardFont           = NULL;
     stopNameFont            = NULL;

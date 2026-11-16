@@ -460,6 +460,68 @@ void TransitBoard::refineWalkTimes() {
     }
 }
 
+static std::string routeKey(double lat, double lon) {
+    char key[64];
+    snprintf(key, sizeof(key), "%.6f,%.6f", lat, lon);
+    return key;
+}
+
+void TransitBoard::requestWalkRoute(double toLat, double toLon) {
+    std::string key = routeKey(toLat, toLon);
+    {
+        std::lock_guard<std::mutex> guard(lock);
+        WalkRoute &route = routes[key];
+        if(route.state == WalkRoute::PENDING || route.state == WalkRoute::READY) {
+            return;
+        }
+        route.state = WalkRoute::PENDING;
+    }
+
+    std::thread([this, key, toLat, toLon]() {
+        char url[256];
+        snprintf(url, sizeof(url), "%s/Journey/JourneyResults/%.6f,%.6f/to/%.6f,%.6f?mode=walking",
+                 TFL_BASE, lat, lon, toLat, toLon);
+        long code;
+        std::string body = httpGet(url, &code);
+
+        WalkRoute result;
+        result.state = WalkRoute::FAILED;
+        if(code == 200) {
+            try {
+                json doc = json::parse(body);
+                const json *best = NULL;
+                for(const auto &j : doc.at("journeys")) {
+                    if(!best || j.value("duration", 9999) < best->value("duration", 9999)) {
+                        best = &j;
+                    }
+                }
+                if(best) {
+                    result.minutes = best->value("duration", 0);
+                    for(const auto &leg : best->at("legs")) {
+                        result.meters += (int)leg.value("distance", 0.0);
+                        json points = json::parse(leg.at("path").value("lineString", "[]"));
+                        for(const auto &pt : points) {
+                            result.path.push_back(std::make_pair(pt[0].get<double>(), pt[1].get<double>()));
+                        }
+                    }
+                    result.state = result.path.empty() ? WalkRoute::FAILED : WalkRoute::READY;
+                }
+            } catch(const std::exception &) {
+                result.state = WalkRoute::FAILED;
+            }
+        }
+
+        std::lock_guard<std::mutex> guard(lock);
+        routes[key] = result;
+    }).detach();
+}
+
+WalkRoute TransitBoard::walkRoute(double toLat, double toLon) {
+    std::lock_guard<std::mutex> guard(lock);
+    auto it = routes.find(routeKey(toLat, toLon));
+    return it == routes.end() ? WalkRoute() : it->second;
+}
+
 std::vector<StopMarker> TransitBoard::stopMarkers() {
     std::lock_guard<std::mutex> guard(lock);
     return markers;
