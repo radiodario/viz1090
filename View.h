@@ -153,6 +153,12 @@ class View {
 		StopMarker selectedStop;
 		void drawWalkRoute();
 		void drawBuses();               // estimated bus positions
+		void drawBusRoute();            // selected bus: route ahead and next stops
+		std::vector<BusMarker> frameBuses;  // bus positions for this frame
+		bool busSelected;
+		std::string selectedBusId;
+		const BusMarker *selectedBus();
+		bool busCallsAt(const BusMarker &bus, const std::string &stopId);
 		bool miniBoard;                 // toggled with B
 		TTF_Font *miniBoardFont;
 		TTF_Font *stopNameFont;         // small type for stop names on the map

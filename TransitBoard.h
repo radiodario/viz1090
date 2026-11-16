@@ -32,6 +32,7 @@ struct Departure {
 
 // A stop for the map, with its next arrivals across all lines.
 struct StopMarker {
+    std::string id;
     std::string name;
     std::string indicator;
     bool station;
@@ -45,12 +46,23 @@ struct StopMarker {
 
 // A bus on the map: position estimated from TfL arrival predictions along
 // its route (TfL doesn't publish live bus GPS).
+struct BusStopCall {
+    std::string id;
+    std::string name;
+    double lat;
+    double lon;
+    bool located;   // lat/lon known from the route sequence
+    std::chrono::steady_clock::time_point arrival;
+};
+
 struct BusMarker {
     std::string line;
     std::string vehicleId;
+    std::string destination;
     double lat;
     double lon;
     float heading;  // degrees from north, along the route
+    std::vector<BusStopCall> upcoming;  // stops ahead, in order
 };
 
 // A walking route from home to a stop, fetched on demand.
@@ -126,15 +138,19 @@ private:
     // route geometry and live vehicle predictions, for bus positions
     struct RoutePoint {
         std::string id;
+        std::string name;
         double lat;
         double lon;
     };
     struct Vehicle {
         std::string line;
         std::string vehicleId;
+        std::string destination;
         // upcoming stops in order: (stop id, predicted arrival)
         std::vector<std::pair<std::string, std::chrono::steady_clock::time_point>> next;
+        std::vector<std::string> names;  // stop names, parallel to next
     };
+    std::map<std::string, RoutePoint> routeStops;  // stop id -> position, from sequences
     std::map<std::string, std::vector<std::vector<RoutePoint>>> lineSequences;  // line id -> stop sequences
     std::vector<std::string> sequencesToFetch;
     std::vector<Vehicle> vehicles;

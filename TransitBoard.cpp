@@ -271,7 +271,9 @@ bool TransitBoard::fetchArrivals() {
                 Vehicle &v = byVehicle[vehicleId];
                 v.vehicleId = vehicleId;
                 v.line = a.value("lineId", "");
+                v.destination = tidyDestination(a.value("destinationName", ""));
                 v.next.push_back(std::make_pair(a.value("naptanId", ""), fetchedAt + std::chrono::seconds(a.value("timeToStation", 0))));
+                v.names.push_back(a.value("stationName", ""));
             }
 
             auto it = stopById.find(a.value("naptanId", ""));
@@ -330,6 +332,7 @@ bool TransitBoard::fetchArrivals() {
     std::vector<StopMarker> stopList;
     for(const auto &stop : stopsCopy) {
         StopMarker m;
+        m.id = stop.id;
         m.name = stop.name;
         m.indicator = stop.indicator;
         m.station = stop.station;
@@ -354,12 +357,20 @@ bool TransitBoard::fetchArrivals() {
     std::vector<Vehicle> vehicleList;
     for(auto &kv : byVehicle) {
         Vehicle &v = kv.second;
-        std::sort(v.next.begin(), v.next.end(),
-                  [](const std::pair<std::string, Clock::time_point> &a,
-                     const std::pair<std::string, Clock::time_point> &b) { return a.second < b.second; });
-        if(v.next.size() > 3) {
-            v.next.resize(3);
+        // sort predictions (and their names) by arrival time
+        std::vector<size_t> order(v.next.size());
+        for(size_t i = 0; i < order.size(); i++) {
+            order[i] = i;
         }
+        std::sort(order.begin(), order.end(), [&](size_t a, size_t b) { return v.next[a].second < v.next[b].second; });
+        std::vector<std::pair<std::string, Clock::time_point>> next;
+        std::vector<std::string> names;
+        for(size_t i : order) {
+            next.push_back(v.next[i]);
+            names.push_back(v.names[i]);
+        }
+        v.next = next;
+        v.names = names;
         vehicleList.push_back(v);
     }
 
@@ -524,11 +535,17 @@ void TransitBoard::fetchRouteSequences() {
                     p.id = sp.value("id", "");
                     p.lat = sp.value("lat", 0.0);
                     p.lon = sp.value("lon", 0.0);
+                    p.name = sp.value("name", "");
                     points.push_back(p);
                 }
                 seqs.push_back(points);
             }
             std::lock_guard<std::mutex> guard(lock);
+            for(const auto &seq : seqs) {
+                for(const auto &p : seq) {
+                    routeStops[p.id] = p;
+                }
+            }
             auto &all = lineSequences[line];
             all.insert(all.end(), seqs.begin(), seqs.end());
         } catch(const std::exception &) {
@@ -542,10 +559,12 @@ void TransitBoard::fetchRouteSequences() {
 std::vector<BusMarker> TransitBoard::busMarkers() {
     std::vector<Vehicle> vs;
     std::map<std::string, std::vector<std::vector<RoutePoint>>> seqs;
+    std::map<std::string, RoutePoint> stopPos;
     {
         std::lock_guard<std::mutex> guard(lock);
         vs = vehicles;
         seqs = lineSequences;
+        stopPos = routeStops;
     }
 
     Clock::time_point now = Clock::now();
@@ -607,6 +626,18 @@ std::vector<BusMarker> TransitBoard::busMarkers() {
         m.line = v.line;
         std::transform(m.line.begin(), m.line.end(), m.line.begin(), ::toupper);
         m.vehicleId = v.vehicleId;
+        m.destination = v.destination;
+        for(size_t i = first; i < v.next.size(); i++) {
+            BusStopCall call;
+            call.id = v.next[i].first;
+            call.name = v.names[i];
+            call.arrival = v.next[i].second;
+            auto pos = stopPos.find(call.id);
+            call.located = pos != stopPos.end();
+            call.lat = call.located ? pos->second.lat : 0;
+            call.lon = call.located ? pos->second.lon : 0;
+            m.upcoming.push_back(call);
+        }
         m.lat = next->lat + (prev->lat - next->lat) * back;
         m.lon = next->lon + (prev->lon - next->lon) * back;
         float dx = (next->lon - prev->lon) * cos(next->lat * M_PI / 180.0);

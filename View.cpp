@@ -1230,14 +1230,36 @@ void View::registerClick(int tapcount, int x, int y) {
             }
         }
 
-        if(foundStop && stopDist < selectionDist) {
+        // buses, as drawn this frame
+        bool foundBus = false;
+        std::string nearestBus;
+        int busDist = radius2;
+        for(const BusMarker &bus : frameBuses) {
+            float dx, dy;
+            int bx, by;
+            pxFromLonLat(&dx, &dy, bus.lon, bus.lat);
+            screenCoords(&bx, &by, dx, dy);
+            int d = (bx - x) * (bx - x) + (by - y) * (by - y);
+            if(d < busDist) {
+                busDist = d;
+                nearestBus = bus.vehicleId;
+                foundBus = true;
+            }
+        }
+
+        stopSelected = false;
+        busSelected = false;
+        selectedAircraft = NULL;
+
+        if(foundBus && busDist <= stopDist && busDist < selectionDist) {
+            selectedBusId = nearestBus;
+            busSelected = true;
+        } else if(foundStop && stopDist < selectionDist) {
             selectedStop = nearestStop;
             stopSelected = true;
-            selectedAircraft = NULL;
             transit->requestWalkRoute(selectedStop.lat, selectedStop.lon);
         } else {
             selectedAircraft = selection;
-            stopSelected = false;
         }
     } else if(tapcount == 2) {
         mapTargetMaxDist = 0.25 * maxDist;
@@ -1299,7 +1321,16 @@ void View::draw() {
 
     drawGeography();
     drawScaleBars();
+    frameBuses.clear();
+    if(transit && maxDist <= 8.0f) {
+        frameBuses = transit->busMarkers();
+    }
+    if(busSelected && !selectedBus()) {
+        busSelected = false;  // that bus has finished its run
+    }
+
     drawWalkRoute();
+    drawBusRoute();
     drawTransitStops();
     drawBuses();
 
@@ -1695,9 +1726,76 @@ float View::stopArrowHeading(const StopMarker &stop) {
     return heading;
 }
 
+const BusMarker *View::selectedBus() {
+    for(const BusMarker &bus : frameBuses) {
+        if(bus.vehicleId == selectedBusId) {
+            return &bus;
+        }
+    }
+    return NULL;
+}
+
+bool View::busCallsAt(const BusMarker &bus, const std::string &stopId) {
+    for(const BusStopCall &call : bus.upcoming) {
+        if(call.id == stopId) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Selected bus: its route ahead through the next stops, and a summary box.
+void View::drawBusRoute() {
+    const BusMarker *bus = busSelected ? selectedBus() : NULL;
+    if(!bus) {
+        return;
+    }
+
+    SDL_Color color = style.selectedColor;
+    int width = std::max(2, screen_uiscale);
+    const size_t MAX_STOPS = 12;
+
+    float dx, dy;
+    int px, py;
+    pxFromLonLat(&dx, &dy, bus->lon, bus->lat);
+    screenCoords(&px, &py, dx, dy);
+
+    size_t drawn = 0;
+    for(const BusStopCall &call : bus->upcoming) {
+        if(!call.located) {
+            continue;
+        }
+        int sx, sy;
+        pxFromLonLat(&dx, &dy, call.lon, call.lat);
+        screenCoords(&sx, &sy, dx, dy);
+        thickLineRGBA(renderer, px, py, sx, sy, width, color.r, color.g, color.b, SDL_ALPHA_OPAQUE);
+        filledCircleRGBA(renderer, sx, sy, width + 1, color.r, color.g, color.b, SDL_ALPHA_OPAQUE);
+        px = sx;
+        py = sy;
+        if(++drawn >= MAX_STOPS) {
+            break;
+        }
+    }
+
+    // "N29 to Enfield Town  Wood Green 1m  Turnpike Lane 3m ..."
+    auto now = std::chrono::steady_clock::now();
+    std::string message = bus->line + " to " + bus->destination;
+    for(size_t i = 0; i < bus->upcoming.size() && i < 3; i++) {
+        int mins = std::chrono::duration_cast<std::chrono::seconds>(bus->upcoming[i].arrival - now).count() / 60;
+        message += "  " + bus->upcoming[i].name + " " + std::to_string(std::max(0, mins)) + "m";
+    }
+    int maxChars = (screen_width - 2 * PAD) / messageFontWidth - 5;
+    if((int)message.length() > maxChars) {
+        message = message.substr(0, maxChars - 1) + "~";
+    }
+    int left = PAD;
+    int top = screen_height - 2 * (messageFontHeight + PAD);
+    drawStatusBox(&left, &top, "bus", message, color);
+}
+
 // Buses as small red rectangles along their route, with the line number.
 void View::drawBuses() {
-    if(!transit || maxDist > 8.0f) {
+    if(!transit || frameBuses.empty()) {
         return;
     }
 
@@ -1710,7 +1808,27 @@ void View::drawBuses() {
     text.setFont(stopNameFont ? stopNameFont : mapFont);
     text.setColor(style.white);
 
-    for(const BusMarker &bus : transit->busMarkers()) {
+    for(const BusMarker &bus : frameBuses) {
+        // with a stop selected, only buses calling there stay bright;
+        // with a bus selected, only that bus
+        bool faded = false;
+        if(busSelected) {
+            faded = bus.vehicleId != selectedBusId;
+        } else if(stopSelected) {
+            faded = !busCallsAt(bus, selectedStop.id);
+        }
+        auto fade = [faded](SDL_Color c) {
+            if(faded) {
+                c.r = c.r * 30 / 100;
+                c.g = c.g * 30 / 100;
+                c.b = c.b * 30 / 100;
+            }
+            return c;
+        };
+        SDL_Color fill = fade(body);
+        SDL_Color outline = fade(edge);
+        text.setColor(fade(style.white));
+
         float dx, dy;
         int x, y;
         pxFromLonLat(&dx, &dy, bus.lon, bus.lat);
@@ -1729,8 +1847,8 @@ void View::drawBuses() {
             vx[i] = (Sint16)(x + cx[i] * hx - cy[i] * hy);
             vy[i] = (Sint16)(y + cx[i] * hy + cy[i] * hx);
         }
-        filledPolygonRGBA(renderer, vx, vy, 4, body.r, body.g, body.b, SDL_ALPHA_OPAQUE);
-        polygonRGBA(renderer, vx, vy, 4, edge.r, edge.g, edge.b, SDL_ALPHA_OPAQUE);
+        filledPolygonRGBA(renderer, vx, vy, 4, fill.r, fill.g, fill.b, SDL_ALPHA_OPAQUE);
+        polygonRGBA(renderer, vx, vy, 4, outline.r, outline.g, outline.b, SDL_ALPHA_OPAQUE);
 
         text.setPosition(x + (int)len + screen_uiscale, y - (int)len);
         text.setText(bus.line);
@@ -1839,6 +1957,9 @@ void View::drawTransitStops() {
 
         // with a stop selected, the others fade back (not out)
         bool faded = stopSelected && !(stop.lat == selectedStop.lat && stop.lon == selectedStop.lon);
+        if(busSelected && selectedBus()) {
+            faded = !busCallsAt(*selectedBus(), stop.id);
+        }
         auto fade = [faded](SDL_Color c) {
             if(faded) {
                 c.r = c.r * 35 / 100;
@@ -1996,6 +2117,7 @@ View::View(AppData *appData){
     transitHeadFont         = NULL;
     miniBoard               = true;
     stopSelected            = false;
+    busSelected             = false;
     hideCursor              = false;
     miniBoardFont           = NULL;
     stopNameFont            = NULL;
