@@ -260,8 +260,10 @@ void View::font_init() {
     // weather page, sized from the screen height
     int wu = screen_height / 36;
     weatherBigFont = loadFont("font/LondonUndergroundHeavy.ttf", wu * 4);
+    weatherHugeFont = loadFont("font/LondonUndergroundHeavy.ttf", wu * 8);
     weatherHeadFont = loadFont("font/LondonUndergroundHeavy.ttf", wu * 3 / 2);
-    weatherTabFont = loadFont("font/LondonUndergroundHeavy.ttf", wu);
+    weatherTabFont = loadFont("font/LondonUndergroundHeavy.ttf", wu * 3 / 2);
+    weatherBodyFont = loadFont("font/TerminusTTF-Bold-4.46.0.ttf", wu * 3 / 2);
     weatherTextFont = loadFont("font/TerminusTTF-Bold-4.46.0.ttf", wu);
     weatherSmallFont = loadFont("font/TerminusTTF-4.46.0.ttf", wu * 4 / 5);
     if(stopNameFont) {
@@ -1201,6 +1203,10 @@ void View::drawClick() {
 }
 
 void View::registerClick(int tapcount, int x, int y) {
+    if(page == PAGE_WEATHER) {
+        nextWeatherSegment(1);  // tap to skip ahead
+        return;
+    }
     if(tapcount == 1) {
         // tap radius grows with the UI scale so it stays finger/mouse sized
         int radius = 15 * screen_uiscale;
@@ -1385,6 +1391,10 @@ void View::draw() {
 void View::showPage(Page newPage) {
     if((newPage == PAGE_TRANSIT && !transit) || (newPage == PAGE_WEATHER && !weather)) {
         return;
+    }
+    if(newPage == PAGE_WEATHER && page != PAGE_WEATHER) {
+        weatherSegment = 0;  // start the rotation from "Now"
+        weatherSegmentShown = std::chrono::steady_clock::now();
     }
     page = newPage;
     pageShownTime = std::chrono::steady_clock::now();
@@ -2456,6 +2466,10 @@ View::View(AppData *appData){
     radar                   = NULL;
     showRadar               = true;
     weatherBigFont          = NULL;
+    weatherHugeFont         = NULL;
+    weatherBodyFont         = NULL;
+    weatherSegment          = 0;
+    weatherSegmentShown     = std::chrono::steady_clock::now();
     weatherHeadFont         = NULL;
     weatherTabFont          = NULL;
     weatherTextFont         = NULL;

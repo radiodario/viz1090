@@ -80,6 +80,13 @@ void Input::getInput()
 						}
 					break;
 
+					case SDLK_LEFT:
+					case SDLK_RIGHT:
+						if(view->page == View::PAGE_WEATHER) {
+							view->nextWeatherSegment(event.key.keysym.sym == SDLK_RIGHT ? 1 : -1);
+						}
+					break;
+
 					case SDLK_b:
 						// mini departures board on the map
 						if((event.key.keysym.mod & (KMOD_GUI | KMOD_ALT | KMOD_CTRL)) == 0 && !event.key.repeat) {

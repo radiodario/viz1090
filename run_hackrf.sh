@@ -30,4 +30,4 @@ trap 'kill $LOOP_PID 2>/dev/null; pkill -f "dump1090 --device-type hackrf"' EXIT
 mkdir -p /tmp/d1090json
 sleep 2
 # map UI at 2x; board scale halved to keep its text the same size
-./viz1090 --server localhost --lat "$LAT" --lon "$LON" --transit --weather --zoom 1.5 --uiscale 2 --transit-scale 0.75 "$@"
+./viz1090 --server localhost --lat "$LAT" --lon "$LON" --transit --weather --zoom 1 --uiscale 2 --transit-scale 0.75 "$@"

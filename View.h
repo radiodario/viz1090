@@ -145,7 +145,13 @@ class View {
 		void drawRadarTiles(Uint8 alpha, bool animate, time_t *frameTime);  // visible tiles: looping, or the latest frame
 		void drawRadar();               // map overlay
 		void drawWeather();
-		void drawWeatherGlyph(int code, bool isDay, int cx, int cy, int px);
+		void drawWeatherGlyph(int code, bool isDay, int cx, int cy, int px, float anim = -1);
+		void drawWeatherRadar(int top);  // radar segment of the weather page
+		int weatherSegment;              // which rotating segment is showing
+		std::chrono::steady_clock::time_point weatherSegmentShown;
+		void nextWeatherSegment(int dir);
+		TTF_Font *weatherHugeFont;
+		TTF_Font *weatherBodyFont;      // larger Terminus for the weather details
 		TTF_Font *weatherBigFont;
 		TTF_Font *weatherHeadFont;
 		TTF_Font *weatherTabFont;

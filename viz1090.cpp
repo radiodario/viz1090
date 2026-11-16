@@ -194,6 +194,8 @@ int main(int argc, char **argv) {
 
     Input input(&appData,&view);
 
+    view.weatherSegmentShown = std::chrono::steady_clock::now();  // rotation starts with the first frame
+
     signal(SIGINT, SIG_DFL);  // reset signal handler - bit extra safety
     signal(SIGUSR1, [](int) { viewSnapshotRequested = 1; });  // pkill -USR1 viz1090 saves a frame
 
