@@ -59,6 +59,7 @@ void showHelp(void) {
 "--screenindex <i>                Set the index of the display to use (default: 0)\n"
 "--uiscale <factor>               UI global scaling (default: 1)\n"
 "--hide-cursor                    Hide the mouse pointer (kiosk screens)\n"
+"--no-adsb                        No aircraft: don't connect to dump1090, hide its status\n"
 "--zoom <km>                      Initial map radius in km (default: 25)\n"
 "--weather                        Add a local weather page (Open-Meteo; W to show) and rain radar on the map (R)\n"
 "--weather-start                  Start on the weather page\n"
@@ -119,6 +120,8 @@ int main(int argc, char **argv) {
          } else if (!strcmp(argv[j],"--screensize") && more) {
             view.screen_width = atoi(argv[++j]);
             view.screen_height = atoi(argv[++j]);
+        } else if (!strcmp(argv[j],"--no-adsb")) {
+            view.noAdsb = true;
         } else if (!strcmp(argv[j],"--hide-cursor")) {
             view.hideCursor = true;
         } else if (!strcmp(argv[j],"--zoom") && more) {
@@ -208,8 +211,10 @@ int main(int argc, char **argv) {
     {
         input.getInput();
         view.draw();
-        appData.connect();
-        appData.update();
+        if(!view.noAdsb) {
+            appData.connect();
+            appData.update();
+        }
     }
     
     appData.disconnect();

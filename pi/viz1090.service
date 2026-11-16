@@ -1,0 +1,18 @@
+# systemd unit: start viz1090 on boot and keep it running.
+# Installed by pi/setup_pi.sh to /etc/systemd/system/viz1090.service
+[Unit]
+Description=viz1090 display (departures, weather, map)
+After=network-online.target systemd-user-sessions.service
+Wants=network-online.target
+
+[Service]
+User=pi
+Group=video
+SupplementaryGroups=render input
+WorkingDirectory=/home/pi/viz1090
+ExecStart=/home/pi/viz1090/pi/run_pi.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

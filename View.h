@@ -263,6 +263,7 @@ class View {
 	    int screen_depth;
 	    int fullscreen;
 	    bool hideCursor;
+	    bool noAdsb;                // no aircraft source: skip the decoder entirely
 	    int screen_index;
 
 		SDL_Window		*window;

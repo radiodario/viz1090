@@ -436,7 +436,9 @@ void View::drawStatus() {
     }
 
 
-    if(!appData->connected) {
+    if(noAdsb) {
+        // no aircraft source: nothing to report
+    } else if(!appData->connected) {
         drawStatusBox(&left,&top,"init", "connecting", style.red);
     } else {    
         char strLoc[20] = " ";
@@ -2489,6 +2491,7 @@ View::View(AppData *appData){
     transitStale            = 0;
     lastAnimTime            = std::chrono::steady_clock::now();
     hideCursor              = false;
+    noAdsb                  = false;
     miniBoardFont           = NULL;
     stopNameFont            = NULL;
     stopNameFontHeight      = 0;
