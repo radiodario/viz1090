@@ -1,20 +1,18 @@
-// RadarData: latest RainViewer radar tiles around a point. See RadarData.h.
+// RadarData: on-demand RainViewer radar tiles for every recent frame.
+// See RadarData.h.
 
 #include "RadarData.h"
 
 #include <curl/curl.h>
 #include <nlohmann/json.hpp>
 
-#include <chrono>
-#include <cmath>
 #include <cstdio>
 
 using json = nlohmann::json;
+using Clock = std::chrono::steady_clock;
 
-static const int REFRESH_S = 300;
-static const int RETRY_S = 60;
-static const int ZOOM = 7;          // highest zoom RainViewer's free tier serves
-static const int GRID = 1;          // tiles either side of home: 3x3
+static const int FRAMES_REFRESH_S = 300;
+static const int WANT_EXPIRY_S = 120;   // stop fetching tiles nobody has looked at for this long
 
 static size_t appendBytes(char *data, size_t size, size_t count, void *out) {
     std::vector<unsigned char> *buf = static_cast<std::vector<unsigned char> *>(out);
@@ -41,20 +39,24 @@ static bool download(const std::string &url, std::vector<unsigned char> *out) {
     return res == CURLE_OK && code == 200;
 }
 
-// slippy-map tile maths (Web Mercator)
-static double tileLon(int x, int z) {
-    return x / pow(2.0, z) * 360.0 - 180.0;
+// key() is "<path>/z/x/y": strip the last three parts to get the frame path
+static std::string pathOfKey(const std::string &k) {
+    size_t cut = k.size();
+    for(int i = 0; i < 3 && cut != std::string::npos; i++) {
+        cut = k.rfind('/', cut - 1);
+    }
+    return cut == std::string::npos ? "" : k.substr(0, cut);
 }
 
-static double tileLat(int y, int z) {
-    double n = M_PI - 2.0 * M_PI * y / pow(2.0, z);
-    return 180.0 / M_PI * atan(sinh(n));
+std::string RadarData::key(const std::string &path, int z, int x, int y) {
+    char k[160];
+    snprintf(k, sizeof(k), "%s/%d/%d/%d", path.c_str(), z, x, y);
+    return k;
 }
 
 RadarData::RadarData() {
-    lat = 0;
-    lon = 0;
     running = false;
+    changes = 0;
 }
 
 RadarData::~RadarData() {
@@ -64,98 +66,146 @@ RadarData::~RadarData() {
     }
 }
 
-void RadarData::start(double lat, double lon) {
-    this->lat = lat;
-    this->lon = lon;
+void RadarData::start() {
     curl_global_init(CURL_GLOBAL_DEFAULT);
     running = true;
     worker = std::thread(&RadarData::run, this);
 }
 
 void RadarData::run() {
+    Clock::time_point lastFrames = Clock::now() - std::chrono::seconds(FRAMES_REFRESH_S);
     while(running) {
-        int wait = fetch() ? REFRESH_S : RETRY_S;
-        for(int i = 0; i < wait * 4 && running; i++) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+        if(Clock::now() - lastFrames >= std::chrono::seconds(FRAMES_REFRESH_S)) {
+            if(refreshFrames()) {
+                lastFrames = Clock::now();
+            } else {
+                lastFrames = Clock::now() - std::chrono::seconds(FRAMES_REFRESH_S - 30);  // retry soon
+            }
+        }
+        if(!downloadNext()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
         }
     }
 }
 
-bool RadarData::fetch() {
+bool RadarData::refreshFrames() {
     std::vector<unsigned char> index;
     if(!download("https://api.rainviewer.com/public/weather-maps.json", &index)) {
         return false;
     }
 
-    std::string host, path;
-    time_t frameTime = 0;
+    std::vector<RadarFrameInfo> list;
+    std::string newHost;
     try {
         json doc = json::parse(index.begin(), index.end());
-        host = doc.value("host", "");
-        const json &past = doc.at("radar").at("past");
-        if(past.empty()) {
-            return false;
+        newHost = doc.value("host", "");
+        for(const auto &f : doc.at("radar").at("past")) {
+            RadarFrameInfo info;
+            info.path = f.value("path", "");
+            info.time = f.value("time", (time_t)0);
+            list.push_back(info);
         }
-        path = past.back().value("path", "");
-        frameTime = past.back().value("time", (time_t)0);
     } catch(const std::exception &) {
         return false;
     }
-
-    if(path == lastPath) {
-        return true;  // nothing new yet
-    }
-
-    int n = 1 << ZOOM;
-    int cx = (int)floor((lon + 180.0) / 360.0 * n);
-    double latRad = lat * M_PI / 180.0;
-    int cy = (int)floor((1.0 - log(tan(latRad) + 1.0 / cos(latRad)) / M_PI) / 2.0 * n);
-
-    RadarFrame frame;
-    frame.time = frameTime;
-    for(int dy = -GRID; dy <= GRID; dy++) {
-        for(int dx = -GRID; dx <= GRID; dx++) {
-            if(!running) {
-                return false;
-            }
-            RadarTile tile;
-            tile.z = ZOOM;
-            tile.x = (cx + dx + n) % n;
-            tile.y = cy + dy;
-            if(tile.y < 0 || tile.y >= n) {
-                continue;
-            }
-            tile.lonLeft = tileLon(tile.x, ZOOM);
-            tile.lonRight = tileLon(tile.x + 1, ZOOM);
-            tile.latTop = tileLat(tile.y, ZOOM);
-            tile.latBottom = tileLat(tile.y + 1, ZOOM);
-
-            // colour scheme 2 (universal blue), unsmoothed for crisp pixels, with snow
-            char url[512];
-            snprintf(url, sizeof(url), "%s%s/256/%d/%d/%d/2/0_1.png", host.c_str(), path.c_str(), ZOOM, tile.x, tile.y);
-            if(download(url, &tile.png)) {
-                frame.tiles.push_back(tile);
-            }
-        }
-    }
-
-    if(frame.tiles.empty()) {
+    if(list.empty()) {
         return false;
     }
 
     std::lock_guard<std::mutex> guard(lock);
-    frame.version = current.version + 1;
-    current = frame;
-    lastPath = path;
+    host = newHost;
+    frameList = list;
+
+    // drop tiles from frames that have rolled off
+    std::set<std::string> paths;
+    for(const auto &f : frameList) {
+        paths.insert(f.path);
+    }
+    for(auto it = tiles.begin(); it != tiles.end();) {
+        std::string path = pathOfKey(it->first);
+        if(!paths.count(path)) {
+            it = tiles.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    changes++;
     return true;
 }
 
-RadarFrame RadarData::frame() {
+// Download one missing tile: newest frame first, so the current picture
+// appears before the loop fills in. Returns false when there's nothing to do.
+bool RadarData::downloadNext() {
+    std::string url, k;
+    {
+        std::lock_guard<std::mutex> guard(lock);
+        Clock::time_point now = Clock::now();
+        for(auto it = wanted.begin(); it != wanted.end();) {
+            if(now - it->second > std::chrono::seconds(WANT_EXPIRY_S)) {
+                it = wanted.erase(it);
+            } else {
+                ++it;
+            }
+        }
+        for(auto f = frameList.rbegin(); f != frameList.rend() && url.empty(); ++f) {
+            for(const auto &w : wanted) {
+                int z, x, y;
+                if(sscanf(w.first.c_str(), "%d/%d/%d", &z, &x, &y) != 3) {
+                    continue;
+                }
+                std::string candidate = key(f->path, z, x, y);
+                if(tiles.count(candidate) || failed.count(candidate)) {
+                    continue;
+                }
+                k = candidate;
+                // colour scheme 2 (universal blue), unsmoothed for crisp pixels, with snow
+                char u[512];
+                snprintf(u, sizeof(u), "%s%s/256/%d/%d/%d/2/0_1.png", host.c_str(), f->path.c_str(), z, x, y);
+                url = u;
+                break;
+            }
+        }
+    }
+    if(url.empty()) {
+        return false;
+    }
+
+    std::vector<unsigned char> png;
+    bool ok = download(url, &png);
+
     std::lock_guard<std::mutex> guard(lock);
-    return current;
+    if(ok) {
+        tiles[k] = png;
+        changes++;
+    } else {
+        failed.insert(k);
+    }
+    return true;
+}
+
+std::vector<RadarFrameInfo> RadarData::frames() {
+    std::lock_guard<std::mutex> guard(lock);
+    return frameList;
+}
+
+void RadarData::want(int z, int x, int y) {
+    char k[64];
+    snprintf(k, sizeof(k), "%d/%d/%d", z, x, y);
+    std::lock_guard<std::mutex> guard(lock);
+    wanted[k] = Clock::now();
+}
+
+bool RadarData::tile(const std::string &path, int z, int x, int y, std::vector<unsigned char> *png) {
+    std::lock_guard<std::mutex> guard(lock);
+    auto it = tiles.find(key(path, z, x, y));
+    if(it == tiles.end()) {
+        return false;
+    }
+    *png = it->second;
+    return true;
 }
 
 int RadarData::version() {
     std::lock_guard<std::mutex> guard(lock);
-    return current.version;
+    return changes;
 }

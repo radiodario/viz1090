@@ -1,52 +1,66 @@
-// RadarData: latest precipitation radar from RainViewer (rainviewer.com, free
-// API, attribution required) as a grid of map tiles around a point.
+// RadarData: precipitation radar from RainViewer (rainviewer.com, free API,
+// attribution required): the past ~2 hours in 10-minute frames.
 //
-// A background thread downloads PNG tiles; the view turns them into textures
-// on the render thread (SDL textures can't be made off-thread).
+// Tiles are loaded on demand, like a slippy map: the view asks for the tiles
+// it can see (want()), a background thread downloads them for every frame,
+// newest first, and the view turns the PNGs into textures on the render thread.
 
 #ifndef RADARDATA_H
 #define RADARDATA_H
 
 #include <atomic>
+#include <chrono>
 #include <ctime>
+#include <map>
 #include <mutex>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
 
-struct RadarTile {
-    int z, x, y;                    // slippy-map tile coordinates
-    double latTop, latBottom;       // tile bounds
-    double lonLeft, lonRight;
-    std::vector<unsigned char> png; // encoded image
-};
-
-struct RadarFrame {
-    int version = 0;                // bumps when new tiles arrive
-    time_t time = 0;                // radar timestamp
-    std::vector<RadarTile> tiles;
+struct RadarFrameInfo {
+    std::string path;   // RainViewer frame id, part of the tile URL
+    time_t time;
 };
 
 class RadarData {
 public:
+    static const int MAX_ZOOM = 7;  // highest zoom RainViewer's free tier serves
+
     RadarData();
     ~RadarData();
 
-    void start(double lat, double lon);
-    RadarFrame frame();             // copy of the latest frame
-    int version();                  // cheap check for new data
+    void start();
+
+    // Frames available, oldest first.
+    std::vector<RadarFrameInfo> frames();
+
+    // Ask for tile (z, x, y) in every frame; cheap to call every frame.
+    void want(int z, int x, int y);
+
+    // Copy out a downloaded tile's PNG; false if not here yet.
+    bool tile(const std::string &path, int z, int x, int y, std::vector<unsigned char> *png);
+
+    // Bumps whenever frames or tiles change.
+    int version();
+
+    static std::string key(const std::string &path, int z, int x, int y);
 
 private:
     void run();
-    bool fetch();
+    bool refreshFrames();
+    bool downloadNext();
 
-    double lat;
-    double lon;
     std::thread worker;
     std::atomic<bool> running;
     std::mutex lock;
-    RadarFrame current;
-    std::string lastPath;
+
+    std::vector<RadarFrameInfo> frameList;
+    std::string host;
+    std::map<std::string, std::chrono::steady_clock::time_point> wanted;  // "z/x/y" -> last asked
+    std::map<std::string, std::vector<unsigned char>> tiles;             // key() -> png
+    std::set<std::string> failed;
+    int changes;
 };
 
 #endif

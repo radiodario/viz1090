@@ -102,7 +102,7 @@ bool WeatherData::fetch() {
              "&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m,wind_direction_10m,relative_humidity_2m,is_day"
              "&minutely_15=precipitation,weather_code,temperature_2m,is_day&forecast_minutely_15=4"
              "&hourly=temperature_2m,precipitation_probability,precipitation,weather_code,is_day&forecast_hours=48"
-             "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&forecast_days=7"
+             "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunrise,sunset&forecast_days=7"
              "&timezone=auto&wind_speed_unit=mph",
              lat, lon);
 
@@ -179,6 +179,8 @@ bool WeatherData::fetch() {
             day.tempMax = num(d["temperature_2m_max"], i, 0);
             day.tempMin = num(d["temperature_2m_min"], i, 0);
             day.precipProb = (int)num(d["precipitation_probability_max"], i, -1);
+            day.sunrise = d.contains("sunrise") && d["sunrise"][i].is_string() ? parseLocalTime(d["sunrise"][i].get<std::string>()) : 0;
+            day.sunset = d.contains("sunset") && d["sunset"][i].is_string() ? parseLocalTime(d["sunset"][i].get<std::string>()) : 0;
             w.days.push_back(day);
         }
     } catch(const std::exception &e) {

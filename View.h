@@ -134,16 +134,16 @@ class View {
 		Page page;
 		TransitBoard *transit;          // NULL unless --transit is given
 		WeatherData *weather;           // NULL unless --weather is given
-		RadarData *radar;               // rain radar over the map (with --weather)
-		bool showRadar;                 // toggled with R
-		int radarVersion;
-		time_t radarTime;
+		RadarData *radar;               // rain radar (with --weather)
+		bool showRadar;                 // map overlay, toggled with R
 		struct RadarTexture {
 			SDL_Texture *texture;
-			double latTop, latBottom, lonLeft, lonRight;
+			std::chrono::steady_clock::time_point lastUsed;
 		};
-		std::vector<RadarTexture> radarTextures;
-		void drawRadar();
+		std::map<std::string, RadarTexture> radarTextures;  // RadarData::key -> texture
+		int radarLoopFrame(int frames);  // which frame of the loop to show now
+		void drawRadarTiles(Uint8 alpha, bool animate, time_t *frameTime);  // visible tiles: looping, or the latest frame
+		void drawRadar();               // map overlay
 		void drawWeather();
 		void drawWeatherGlyph(int code, bool isDay, int cx, int cy, int px);
 		TTF_Font *weatherBigFont;

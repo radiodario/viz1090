@@ -26,6 +26,8 @@ struct WeatherDay {
     float tempMax;
     float tempMin;
     int precipProb;
+    time_t sunrise;
+    time_t sunset;
 };
 
 struct WeatherSnapshot {

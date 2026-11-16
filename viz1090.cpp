@@ -169,7 +169,7 @@ int main(int argc, char **argv) {
         }
         weatherData.start(appData.modes.fUserLat, appData.modes.fUserLon);
         view.weather = &weatherData;
-        radarData.start(appData.modes.fUserLat, appData.modes.fUserLon);
+        radarData.start();
         view.radar = &radarData;
         if(weatherStart) {
             view.showPage(View::PAGE_WEATHER);

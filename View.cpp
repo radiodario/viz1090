@@ -1442,6 +1442,25 @@ static std::string dotMatrixText(TTF_Font *font, const std::string &in) {
     return out;
 }
 
+// Short line label: bus routes as-is (55, N29); longer names such as the
+// Overground lines become a three-letter code (Suffragette -> SUF).
+static std::string shortLine(const std::string &line) {
+    if(line.length() <= 4) {
+        return line;
+    }
+    std::string code = line.substr(0, 3);
+    std::transform(code.begin(), code.end(), code.begin(), ::toupper);
+    return code;
+}
+
+// Stop letter from TfL's indicator ("Stop LJ" -> "LJ"); "stn" for stations.
+static std::string stopCode(const std::string &indicator) {
+    if(indicator.compare(0, 5, "Stop ") == 0) {
+        return indicator.substr(5);
+    }
+    return "stn";
+}
+
 static std::string fitText(const std::string &text, int chars) {
     if(chars <= 0) {
         return "";
@@ -1455,12 +1474,29 @@ static std::string fitText(const std::string &text, int chars) {
     return text.substr(0, chars - 1) + ".";
 }
 
+// Draw text so it ends at x (right-aligned), for number columns.
+static void rightText(SDL_Renderer *renderer, Label &label, TTF_Font *font, const std::string &str, int x, int y) {
+    int w = 0, h = 0;
+    TTF_SizeUTF8(font, str.c_str(), &w, &h);
+    label.setPosition(x - w, y);
+    label.setText(str);
+    label.draw(renderer);
+}
+
 void View::drawTransit() {
     SDL_SetRenderDrawColor(renderer, style.backgroundColor.r, style.backgroundColor.g, style.backgroundColor.b, 255);
     SDL_RenderClear(renderer);
 
     TTF_Font *font = transitFont ? transitFont : messageFont;
+    // The dot-matrix font is proportional: size columns by the average width of
+    // real text rather than "M", or names get cut short far too early.
     int charW = transitFont ? transitFontWidth : messageFontWidth;
+    if(transitFont) {
+        const char *sample = "King's Cross St Pancras 390 Euston Road";
+        int sw = 0, sh = 0;
+        TTF_SizeUTF8(transitFont, sample, &sw, &sh);
+        charW = std::max(1, sw / (int)strlen(sample));
+    }
     int fontH = transitFont ? transitFontHeight : messageFontHeight;
 
     Label text;
@@ -1511,11 +1547,18 @@ void View::drawTransit() {
 
     top += headH + 2 * pad;
 
-    // columns, in characters
-    const int badgeChars = 12;  // "Suffragette" fits
+    // columns, in characters: # LINE stop-code TO FROM WALK MINS (the stop code has no heading)
+    const int badgeChars = 5;   // "N29", "SUF"
+    const int codeChars = 4;    // stop letter, e.g. "LJ"
     const int walkChars = 4;    // "10m"
-    const int dueChars = 12;    // "4  16  26"
-    int flexible = totalChars - 3 - badgeChars - walkChars - dueChars - 4;
+    // number columns measured from real digits so they can be right-aligned
+    int digitsW = 0, digitsH = 0;
+    TTF_SizeUTF8(font, "88", &digitsW, &digitsH);
+    int minsSlot = digitsW + charW;             // one arrival time plus a small gap
+    int walkW = 0;
+    TTF_SizeUTF8(font, "88m", &walkW, &digitsH);
+    const int dueChars = (3 * minsSlot) / charW + 1;
+    int flexible = totalChars - 3 - badgeChars - codeChars - walkChars - dueChars - 5;
     bool showStop = flexible >= 36;
     int destChars = showStop ? flexible * 55 / 100 : flexible;
     if(destChars > 34) {
@@ -1529,7 +1572,10 @@ void View::drawTransit() {
     const int numChars = 3;     // row number, e.g. "12"
     int xNum = left;
     int xBadge = xNum + numChars * charW;
-    int xDest = xBadge + (badgeChars + 1) * charW;
+    int xCode = xBadge + (badgeChars + 1) * charW;
+    int codeW = 0, codeH = 0;
+    TTF_SizeUTF8(font, "WW", &codeW, &codeH);
+    int xDest = xCode + std::max((codeChars + 1) * charW, codeW + 2 * charW);
     int xStop = xDest + (destChars + 1) * charW;
     int xWalk = xStop + (showStop ? (stopChars + 1) * charW : 0);
     int xDue = xWalk + (walkChars + 1) * charW;
@@ -1541,8 +1587,8 @@ void View::drawTransit() {
     if(showStop) {
         text.setPosition(xStop, top); text.setText(dm("FROM")); text.draw(renderer);
     }
-    text.setPosition(xWalk, top); text.setText(dm("WALK")); text.draw(renderer);
-    text.setPosition(xDue, top); text.setText(dm("MINS")); text.draw(renderer);
+    rightText(renderer, text, font, dm("WALK"), xWalk + walkW, top);
+    text.setPosition(xDue + charW, top); text.setText(dm("MINS")); text.draw(renderer);
     top += rowH;
     lineRGBA(renderer, left, top - pad / 2, screen_width - left, top - pad / 2, style.grey_dark.r, style.grey_dark.g, style.grey_dark.b, 255);
 
@@ -1561,20 +1607,24 @@ void View::drawTransit() {
             break;
         }
 
-        // row number, like the "1st / 2nd" on station boards
+        // row number, like the "1st / 2nd" on station boards (right-aligned)
         text.setColor(style.grey);
-        text.setPosition(xNum, top);
-        text.setText(dm(std::to_string(shown + 1)));
-        text.draw(renderer);
+        rightText(renderer, text, font, dm(std::to_string(shown + 1)), xBadge - charW, top);
 
         // line badge: filled box with the line name, like the status box labels
         SDL_Color badge = lineBadgeColor(dep);
-        std::string lineText = fitText(dep.line, badgeChars - 1);
+        std::string lineText = shortLine(dep.line);
         int badgeW = (lineText.length() + 1) * charW;
         roundedBoxRGBA(renderer, xBadge, top, xBadge + badgeW, top + fontH, ROUND_RADIUS, badge.r, badge.g, badge.b, SDL_ALPHA_OPAQUE);
         text.setColor(style.white);
         text.setPosition(xBadge + charW / 2, top);
         text.setText(dm(lineText));
+        text.draw(renderer);
+
+        // stop letter in its own column, as on the map labels
+        text.setColor(style.white);
+        text.setPosition(xCode, top);
+        text.setText(dm(stopCode(dep.stopIndicator)));
         text.draw(renderer);
 
         text.setColor(style.white);
@@ -1583,31 +1633,21 @@ void View::drawTransit() {
         text.draw(renderer);
 
         if(showStop) {
-            std::string from = dep.stopName;
-            if(!dep.stopIndicator.empty() && dep.stopIndicator.compare(0, 5, "Stop ") == 0) {
-                from += " " + dep.stopIndicator.substr(5);
-            }
             text.setColor(style.grey);
             text.setPosition(xStop, top);
-            text.setText(dm(fitText(from, stopChars)));
+            text.setText(dm(fitText(dep.stopName, stopChars)));
             text.draw(renderer);
         }
 
         text.setColor(style.grey);
-        text.setPosition(xWalk, top);
-        text.setText(dm(std::to_string(dep.walkMinutes) + "m"));
-        text.draw(renderer);
+        rightText(renderer, text, font, dm(std::to_string(dep.walkMinutes) + "m"), xWalk + walkW, top);
 
-        // next arrivals; the first turns orange when it's time to leave
-        int x = xDue;
+        // next arrivals in tight right-aligned slots; the first turns orange when it's time to leave
         for(size_t i = 0; i < dep.arrivals.size() && i < 3; i++) {
             int mins = std::chrono::duration_cast<std::chrono::seconds>(dep.arrivals[i] - now).count() / 60;
             bool leaveNow = (i == 0 && mins - dep.walkMinutes <= 2);
             text.setColor(leaveNow ? style.orange : style.planeColor);
-            text.setPosition(x, top);
-            text.setText(dm(std::to_string(mins)));
-            text.draw(renderer);
-            x += 4 * charW;
+            rightText(renderer, text, font, dm(std::to_string(mins)), xDue + (int)(i + 1) * minsSlot, top);
         }
 
         top += rowH;
@@ -1686,7 +1726,7 @@ void View::drawMiniBoard() {
         x += numChars * charW;
 
         SDL_Color badge = lineBadgeColor(dep);
-        std::string lineText = dep.line == "Suffragette" ? "Suff" : fitText(dep.line, badgeChars - 1);
+        std::string lineText = shortLine(dep.line);
         roundedBoxRGBA(renderer, x, y, x + (int)(lineText.length() + 1) * charW, y + fontH, ROUND_RADIUS, badge.r, badge.g, badge.b, SDL_ALPHA_OPAQUE);
         text.setColor(style.white);
         text.setPosition(x + charW / 2, y);
@@ -1701,12 +1741,7 @@ void View::drawMiniBoard() {
         x += (destChars + 1) * charW;
 
         // stop code, as on the map labels (stations get "stn")
-        std::string code = dep.stopIndicator;
-        if(code.compare(0, 5, "Stop ") == 0) {
-            code = code.substr(5);
-        } else {
-            code = "stn";
-        }
+        std::string code = stopCode(dep.stopIndicator);
         text.setColor(style.grey);
         text.setPosition(x, y);
         text.setText(dotMatrixText(font, fitText(code, stopChars)));
@@ -1789,69 +1824,136 @@ float View::stopArrowHeading(const StopMarker &stop) {
     return heading;
 }
 
-// Rain radar tiles under the aircraft, as chunky semi-transparent pixels.
+// The radar loop: 0.4 s per 10-minute frame, holding 2 s on the newest.
+int View::radarLoopFrame(int frames) {
+    if(frames <= 1) {
+        return 0;
+    }
+    const long STEP_MS = 400, HOLD_MS = 2000;
+    long cycle = frames * STEP_MS + HOLD_MS;
+    long ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count() % cycle;
+    return (int)std::min<long>(frames - 1, ms / STEP_MS);
+}
+
+static double radarTileLon(int x, int n) {
+    return x / (double)n * 360.0 - 180.0;
+}
+
+static double radarTileLat(int y, int n) {
+    double k = M_PI - 2.0 * M_PI * y / n;
+    return 180.0 / M_PI * atan(sinh(k));
+}
+
+// Draw the radar tiles that are on screen for the current loop frame. Tiles
+// are requested on demand (like a slippy map) at a zoom that roughly matches
+// the screen's scale, and decoded into textures the first time they're drawn.
+void View::drawRadarTiles(Uint8 alpha, bool animate, time_t *frameTime) {
+    std::vector<RadarFrameInfo> frames = radar->frames();
+    if(frames.empty()) {
+        return;
+    }
+    const RadarFrameInfo &frame = frames[animate ? radarLoopFrame((int)frames.size()) : (int)frames.size() - 1];
+    if(frameTime) {
+        *frameTime = frame.time;
+    }
+
+    // visible area, from the same scale the map uses
+    float scale = std::max(screen_width, screen_height);
+    float kmPerPx = 2.0f * maxDist / scale;
+    double latHalf = (screen_height / 2.0) * kmPerPx / 111.195;
+    double lonHalf = (screen_width / 2.0) * kmPerPx / (111.195 * cos(centerLat * M_PI / 180.0));
+    double lonLeft = centerLon - lonHalf, lonRight = centerLon + lonHalf;
+    double latTop = std::min(84.0, centerLat + latHalf), latBottom = std::max(-84.0, centerLat - latHalf);
+
+    // zoom where a tile's pixels are about screen-pixel sized, capped by the free tier
+    double wantZoom = log2(screen_width * 360.0 / (256.0 * (lonRight - lonLeft)));
+    int z = std::max(2, std::min(RadarData::MAX_ZOOM, (int)lround(wantZoom)));
+    int n = 1 << z;
+
+    auto tileX = [n](double lon) { return (int)floor((lon + 180.0) / 360.0 * n); };
+    auto tileY = [n](double lat) {
+        double r = lat * M_PI / 180.0;
+        return (int)floor((1.0 - log(tan(r) + 1.0 / cos(r)) / M_PI) / 2.0 * n);
+    };
+    int x0 = tileX(lonLeft), x1 = tileX(lonRight);
+    int y0 = std::max(0, tileY(latTop)), y1 = std::min(n - 1, tileY(latBottom));
+    if((x1 - x0 + 1) * (y1 - y0 + 1) > 64) {
+        return;  // zoomed out too far for this to be useful
+    }
+
+    auto now = std::chrono::steady_clock::now();
+    auto nz = [](double v) { return v == 0.0 ? 1e-7 : v; };  // pxFromLonLat treats 0 as "no position"
+
+    for(int ty = y0; ty <= y1; ty++) {
+        for(int tx = x0; tx <= x1; tx++) {
+            int wx = ((tx % n) + n) % n;
+            radar->want(z, wx, ty);
+
+            std::string k = RadarData::key(frame.path, z, wx, ty);
+            auto it = radarTextures.find(k);
+            if(it == radarTextures.end()) {
+                std::vector<unsigned char> png;
+                if(!radar->tile(frame.path, z, wx, ty, &png)) {
+                    continue;  // still downloading
+                }
+                SDL_RWops *rw = SDL_RWFromConstMem(png.data(), (int)png.size());
+                SDL_Surface *surface = rw ? IMG_Load_RW(rw, 1) : NULL;
+                if(!surface) {
+                    continue;
+                }
+                SDL_Texture *texture = SDL_CreateTextureFromSurface(renderer, surface);
+                SDL_FreeSurface(surface);
+                if(!texture) {
+                    continue;
+                }
+                SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+                SDL_SetTextureScaleMode(texture, SDL_ScaleModeNearest);
+                RadarTexture rt = {texture, now};
+                it = radarTextures.insert(std::make_pair(k, rt)).first;
+            }
+            it->second.lastUsed = now;
+
+            float dx, dy;
+            int px1, py1, px2, py2;
+            pxFromLonLat(&dx, &dy, nz(radarTileLon(tx, n)), nz(radarTileLat(ty, n)));
+            screenCoords(&px1, &py1, dx, dy);
+            pxFromLonLat(&dx, &dy, nz(radarTileLon(tx + 1, n)), nz(radarTileLat(ty + 1, n)));
+            screenCoords(&px2, &py2, dx, dy);
+            // neighbouring tiles share exact edges; overlapping would double the alpha
+            SDL_Rect dest = {px1, py1, px2 - px1, py2 - py1};
+            SDL_SetTextureAlphaMod(it->second.texture, alpha);
+            SDL_RenderCopy(renderer, it->second.texture, NULL, &dest);
+        }
+    }
+
+    // let go of tiles that haven't been on screen for a while
+    for(auto it = radarTextures.begin(); it != radarTextures.end();) {
+        if(now - it->second.lastUsed > std::chrono::seconds(20)) {
+            SDL_DestroyTexture(it->second.texture);
+            it = radarTextures.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+// Rain radar under the aircraft: the latest frame.
 void View::drawRadar() {
     if(!radar || !showRadar) {
         return;
     }
 
-    // new tiles: decode and upload on the render thread
-    if(radar->version() != radarVersion) {
-        for(RadarTexture &t : radarTextures) {
-            SDL_DestroyTexture(t.texture);
-        }
-        radarTextures.clear();
-
-        RadarFrame frame = radar->frame();
-        for(const RadarTile &tile : frame.tiles) {
-            SDL_RWops *rw = SDL_RWFromConstMem(tile.png.data(), (int)tile.png.size());
-            SDL_Surface *surface = rw ? IMG_Load_RW(rw, 1) : NULL;
-            if(!surface) {
-                continue;
-            }
-            SDL_Texture *texture = SDL_CreateTextureFromSurface(renderer, surface);
-            SDL_FreeSurface(surface);
-            if(!texture) {
-                continue;
-            }
-            SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
-            SDL_SetTextureScaleMode(texture, SDL_ScaleModeNearest);
-            RadarTexture rt = {texture, tile.latTop, tile.latBottom, tile.lonLeft, tile.lonRight};
-            radarTextures.push_back(rt);
-        }
-        radarVersion = frame.version;
-        radarTime = frame.time;
-    }
-
-    if(radarTextures.empty()) {
+    // lighter when zoomed in, where each radar pixel is a big block over the streets
+    Uint8 alpha = maxDist < 3.0f ? 55 : 90;
+    time_t frameTime = 0;
+    drawRadarTiles(alpha, false, &frameTime);  // latest frame; the loop lives on the weather page
+    if(!frameTime) {
         return;
     }
 
-    // lighter when zoomed in, where each radar pixel is a big block over the streets
-    Uint8 alpha = maxDist < 3.0f ? 70 : 120;
-
-    // pxFromLonLat treats exactly 0 as "no position": nudge the meridian
-    auto nz = [](double v) { return v == 0.0 ? 1e-7 : v; };
-
-    for(const RadarTexture &t : radarTextures) {
-        float dx, dy;
-        int x1, y1, x2, y2;
-        pxFromLonLat(&dx, &dy, nz(t.lonLeft), nz(t.latTop));
-        screenCoords(&x1, &y1, dx, dy);
-        pxFromLonLat(&dx, &dy, nz(t.lonRight), nz(t.latBottom));
-        screenCoords(&x2, &y2, dx, dy);
-        if(x2 < 0 || y2 < 0 || x1 > screen_width || y1 > screen_height) {
-            continue;
-        }
-        // one pixel of overlap hides seams from rounding between tiles
-        SDL_Rect dest = {x1, y1, x2 - x1 + 1, y2 - y1 + 1};
-        SDL_SetTextureAlphaMod(t.texture, alpha);
-        SDL_RenderCopy(renderer, t.texture, NULL, &dest);
-    }
-
-    // credit, as RainViewer asks
+    // credit, as RainViewer asks, with the frame's time
     char when[16];
-    strftime(when, sizeof(when), "%H:%M", localtime(&radarTime));
+    strftime(when, sizeof(when), "%H:%M", localtime(&frameTime));
     std::string credit = std::string("Radar: RainViewer ") + when;
     TTF_Font *font = stopNameFont ? stopNameFont : mapFont;
     int w = 0, h = 0;
@@ -2307,7 +2409,7 @@ void View::drawTransitStops() {
             if(mins < 0) {
                 continue;
             }
-            std::string s = arrival.first + " " + std::to_string(mins) + "m";
+            std::string s = shortLine(arrival.first) + " " + std::to_string(mins) + "m";
             // dim the ones you can't walk to in time
             text.setColor(fade(mins <= stop.walkMinutes ? style.grey_dark : style.subLabelColor));
             text.setPosition(tx, ty);
@@ -2353,8 +2455,6 @@ View::View(AppData *appData){
     weather                 = NULL;
     radar                   = NULL;
     showRadar               = true;
-    radarVersion            = -1;
-    radarTime               = 0;
     weatherBigFont          = NULL;
     weatherHeadFont         = NULL;
     weatherTabFont          = NULL;
