@@ -57,7 +57,14 @@ void showHelp(void) {
 "--server <IPv4/hosname>          TCP Beast output listen IPv4 (default: 127.0.0.1)\n"
 "--screensize <width> <height>    Set frame buffer resolution (default: screen resolution)\n"
 "--screenindex <i>                Set the index of the display to use (default: 0)\n"
-"--uiscale <factor>               UI global scaling (default: 1)\n"  
+"--uiscale <factor>               UI global scaling (default: 1)\n"
+"--zoom <km>                      Initial map radius in km (default: 25)\n"
+"--transit                        Add a TfL departures page (toggle with T or Tab)\n"
+"--transit-loc <lat> <lon>        Location for departures (default: --lat/--lon)\n"
+"--transit-radius <meters>        Walking radius for stops (default: 1000, ~15 min)\n"
+"--transit-scale <factor>         Departures text size vs map text (default: 1.5)\n"
+"--transit-start                  Start on the departures page\n"
+"--rotate <seconds>               Alternate between map and departures\n"
     );
 }
 
@@ -71,7 +78,13 @@ int main(int argc, char **argv) {
   
     AppData appData;
     View view(&appData);
-    
+
+    TransitBoard transit;
+    bool transitEnabled = false;
+    bool transitStart = false;
+    double transitLat = 0, transitLon = 0;
+    int transitRadius = 1000;
+
     // Parse the command line options
     for (int j = 1; j < argc; j++) {
         int more = ((j + 1) < argc); // There are more arguments
@@ -99,6 +112,26 @@ int main(int argc, char **argv) {
          } else if (!strcmp(argv[j],"--screensize") && more) {
             view.screen_width = atoi(argv[++j]);
             view.screen_height = atoi(argv[++j]);
+        } else if (!strcmp(argv[j],"--zoom") && more) {
+            view.maxDist = atof(argv[++j]);
+        } else if (!strcmp(argv[j],"--transit")) {
+            transitEnabled = true;
+        } else if (!strcmp(argv[j],"--transit-loc") && j + 2 < argc) {
+            transitEnabled = true;
+            transitLat = atof(argv[++j]);
+            transitLon = atof(argv[++j]);
+        } else if (!strcmp(argv[j],"--transit-radius") && more) {
+            transitEnabled = true;
+            transitRadius = atoi(argv[++j]);
+        } else if (!strcmp(argv[j],"--transit-scale") && more) {
+            transitEnabled = true;
+            view.transitScale = atof(argv[++j]);
+        } else if (!strcmp(argv[j],"--transit-start")) {
+            transitEnabled = true;
+            transitStart = true;
+        } else if (!strcmp(argv[j],"--rotate") && more) {
+            transitEnabled = true;
+            view.rotateSeconds = atof(argv[++j]);
         } else if (!strcmp(argv[j],"--help")) {
             showHelp();
             exit(0);
@@ -115,9 +148,26 @@ int main(int argc, char **argv) {
     view.SDL_init();
     view.font_init();
 
+    if(transitEnabled) {
+        if(transitLat == 0 && transitLon == 0) {
+            transitLat = appData.modes.fUserLat;
+            transitLon = appData.modes.fUserLon;
+        }
+        if(transitLat == 0 && transitLon == 0) {
+            fprintf(stderr, "--transit needs a location: use --transit-loc or --lat/--lon\n");
+            exit(1);
+        }
+        transit.start(transitLat, transitLon, transitRadius);
+        view.transit = &transit;
+        if(transitStart) {
+            view.showPage(View::PAGE_TRANSIT);
+        }
+    }
+
     Input input(&appData,&view);
 
     signal(SIGINT, SIG_DFL);  // reset signal handler - bit extra safety
+    signal(SIGUSR1, [](int) { viewSnapshotRequested = 1; });  // pkill -USR1 viz1090 saves a frame
 
     int go;
  

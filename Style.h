@@ -18,6 +18,11 @@ typedef struct Style {
     SDL_Color geoColor;
     SDL_Color airportColor;
 
+    SDL_Color waterColor;
+    SDL_Color roadMinorColor;
+    SDL_Color roadMajorColor;
+    SDL_Color railColor;
+
     SDL_Color labelColor;
     SDL_Color labelLineColor;    
 	SDL_Color subLabelColor;   
@@ -80,6 +85,12 @@ typedef struct Style {
 
 	    geoColor = purple_dark;
 	    airportColor = purple;
+
+	    // OSM layers: dim, so aircraft stay the brightest thing on screen
+	    waterColor = {16, 48, 104, 255};
+	    roadMinorColor = {34, 34, 40, 255};
+	    roadMajorColor = {72, 72, 84, 255};
+	    railColor = {110, 64, 24, 255};
 
 	    labelColor = white;
 	    labelLineColor = grey_dark;

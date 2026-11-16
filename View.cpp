@@ -39,6 +39,25 @@
 #include <iostream>
 #include <thread>
 
+// Set from a SIGUSR1 handler; the next frame is saved to SNAPSHOT_PATH.
+// Lets you grab the screen remotely: pkill -USR1 viz1090
+volatile sig_atomic_t viewSnapshotRequested = 0;
+static const char *SNAPSHOT_PATH = "/tmp/viz1090-snapshot.bmp";
+
+void View::presentFrame() {
+    if(viewSnapshotRequested) {
+        viewSnapshotRequested = 0;
+        SDL_Surface *shot = SDL_CreateRGBSurfaceWithFormat(0, screen_width, screen_height, 32, SDL_PIXELFORMAT_ARGB8888);
+        if(shot) {
+            if(SDL_RenderReadPixels(renderer, NULL, SDL_PIXELFORMAT_ARGB8888, shot->pixels, shot->pitch) == 0) {
+                SDL_SaveBMP(shot, SNAPSHOT_PATH);
+            }
+            SDL_FreeSurface(shot);
+        }
+    }
+    SDL_RenderPresent(renderer);
+}
+
 using fmilliseconds = std::chrono::duration<float, std::milli>;
 using fseconds = std::chrono::duration<float>;
 
@@ -224,7 +243,20 @@ void View::font_init() {
     messageFontHeight = 12 * screen_uiscale; 
 
     labelFontWidth = 6 * screen_uiscale;
-    labelFontHeight = 12 * screen_uiscale; 
+    labelFontHeight = 12 * screen_uiscale;
+
+    // departures board text, sized independently of the map UI
+    int transitSize = (int)(12 * screen_uiscale * transitScale + 0.5);
+    if(transitSize < 8) {
+        transitSize = 8;
+    }
+    // London Underground dot-matrix typeface (github.com/petykowski/London-Underground-Dot-Matrix-Typeface)
+    transitFont = loadFont("font/LondonUndergroundRegular.ttf", transitSize);
+    transitHeadFont = loadFont("font/LondonUndergroundHeavy.ttf", transitSize * 3 / 2);
+    transitClockFont = loadFont("font/LondonUndergroundBold.ttf", transitSize * 3 / 2);
+    if(transitFont) {
+        TTF_SizeUTF8(transitFont, "M", &transitFontWidth, &transitFontHeight);
+    }
 }
 
 
@@ -244,9 +276,14 @@ void View::SDL_init() {
         exit(1);
     }
 
-    SDL_ShowCursor(SDL_DISABLE);
+    // Hide the cursor only for kiosk-style fullscreen use; keep it in a desktop window.
+    if(fullscreen) {
+        SDL_ShowCursor(SDL_DISABLE);
+    }
 
-    Uint32 flags = 0;
+    // Render at native resolution on high-DPI (Retina) displays instead of
+    // letting the OS upscale a 1x buffer.
+    Uint32 flags = SDL_WINDOW_ALLOW_HIGHDPI;
 
     if(fullscreen) {
         flags = flags | SDL_WINDOW_FULLSCREEN_DESKTOP;
@@ -254,13 +291,39 @@ void View::SDL_init() {
 
     if(screen_width == 0) {
         SDL_DisplayMode DM;
-        SDL_GetCurrentDisplayMode(0, &DM);
+        SDL_GetCurrentDisplayMode(screen_index, &DM);
         screen_width = DM.w;
         screen_height= DM.h;
+
+        // In a desktop window, default to half the display so it fits with
+        // the title bar and dock. --screensize still overrides this.
+        if(!fullscreen) {
+            screen_width /= 2;
+            screen_height /= 2;
+        }
     }
 
     window =  SDL_CreateWindow("viz1090",  SDL_WINDOWPOS_CENTERED_DISPLAY(screen_index),  SDL_WINDOWPOS_CENTERED_DISPLAY(screen_index), screen_width, screen_height, flags);        
     renderer = SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+
+    // Window size is in points; drawing happens in pixels. Work in pixels
+    // everywhere and scale the UI so it keeps the same physical size.
+    // Measure the window as actually created: fullscreen takes the size of
+    // whichever display it lands on, not the size we requested.
+    int point_width = 0, point_height = 0;
+    int pixel_width = 0, pixel_height = 0;
+    SDL_GetWindowSize(window, &point_width, &point_height);
+    SDL_GetRendererOutputSize(renderer, &pixel_width, &pixel_height);
+    screen_width = pixel_width;
+    screen_height = pixel_height;
+    if(point_width > 0 && pixel_width > point_width) {
+        pixel_ratio = (pixel_width + point_width / 2) / point_width;
+        if(pixel_ratio < 1) {
+            pixel_ratio = 1;
+        }
+        screen_uiscale *= pixel_ratio;
+    }
+
     mapTexture = SDL_CreateTexture(renderer,
                                SDL_PIXELFORMAT_ARGB8888,
                                SDL_TEXTUREACCESS_TARGET,
@@ -593,6 +656,15 @@ void View::drawLines(int left, int top, int right, int bottom, int bailTime) {
 
     latLonFromScreenCoords(&screen_lat_min, &screen_lon_min, left, top);
     latLonFromScreenCoords(&screen_lat_max, &screen_lon_max, right, bottom);
+
+    // OSM layers underneath; minor roads only when zoomed in enough to read them
+    const float MINOR_ROADS_MAX_DIST_KM = 6.0f;
+    drawLinesRecursive(&(map.water_root), screen_lat_min, screen_lat_max, screen_lon_min, screen_lon_max, style.waterColor);
+    if(maxDist < MINOR_ROADS_MAX_DIST_KM) {
+        drawLinesRecursive(&(map.road_minor_root), screen_lat_min, screen_lat_max, screen_lon_min, screen_lon_max, style.roadMinorColor);
+    }
+    drawLinesRecursive(&(map.road_major_root), screen_lat_min, screen_lat_max, screen_lon_min, screen_lon_max, style.roadMajorColor);
+    drawLinesRecursive(&(map.rail_root), screen_lat_min, screen_lat_max, screen_lon_min, screen_lon_max, style.railColor);
 
     drawLinesRecursive(&(map.root), screen_lat_min, screen_lat_max, screen_lon_min, screen_lon_max, style.geoColor);
 
@@ -1163,11 +1235,24 @@ void View::draw() {
         SDL_Delay(static_cast<Uint32>(targetFrameTime - lastFrameTime));
     }
  
+    if(transit && rotateSeconds > 0 &&
+       std::chrono::steady_clock::now() - pageShownTime > std::chrono::milliseconds((int)(rotateSeconds * 1000))) {
+        togglePage();
+    }
+
+    if(page == PAGE_TRANSIT) {
+        drawTransit();
+        presentFrame();
+        lastFrameTime = elapsed(drawStartTime);
+        return;
+    }
+
     moveMapToTarget();
     zoomMapToTarget();
 
     drawGeography();
     drawScaleBars();
+    drawTransitStops();
 
     if(appData->connected) {
         for(int i = 0; i < 8; i++) {
@@ -1184,9 +1269,360 @@ void View::draw() {
     //drawMouse();
     drawClick();
 
-    SDL_RenderPresent(renderer);  
+    presentFrame();
     
     lastFrameTime = elapsed(drawStartTime); 
+}
+
+//
+// Transit page
+//
+
+void View::showPage(Page newPage) {
+    if(newPage == PAGE_TRANSIT && !transit) {
+        return;
+    }
+    page = newPage;
+    pageShownTime = std::chrono::steady_clock::now();
+    if(page == PAGE_MAP) {
+        mapRedraw = 1;  // the map texture is stale after time away
+    }
+}
+
+void View::togglePage() {
+    showPage(page == PAGE_MAP ? PAGE_TRANSIT : PAGE_MAP);
+}
+
+static SDL_Color lineBadgeColor(const Departure &dep) {
+    if(dep.mode == "bus") {
+        return {220, 36, 31, 255};      // London bus red
+    }
+    if(dep.mode == "overground") {
+        return {250, 123, 5, 255};      // Overground orange
+    }
+    if(dep.mode == "tube") {
+        return {0, 25, 168, 255};       // Underground blue
+    }
+    if(dep.mode == "elizabeth-line") {
+        return {105, 80, 161, 255};
+    }
+    return {127, 127, 127, 255};
+}
+
+static std::string fitText(const std::string &text, int chars) {
+    if(chars <= 0) {
+        return "";
+    }
+    if((int)text.length() <= chars) {
+        return text;
+    }
+    if(chars <= 1) {
+        return text.substr(0, chars);
+    }
+    return text.substr(0, chars - 1) + ".";
+}
+
+void View::drawTransit() {
+    SDL_SetRenderDrawColor(renderer, style.backgroundColor.r, style.backgroundColor.g, style.backgroundColor.b, 255);
+    SDL_RenderClear(renderer);
+
+    TTF_Font *font = transitFont ? transitFont : messageFont;
+    int charW = transitFont ? transitFontWidth : messageFontWidth;
+    int fontH = transitFont ? transitFontHeight : messageFontHeight;
+
+    Label text;
+    text.setFont(font);
+
+    // The dot-matrix font lacks some glyphs ('/', '~', brackets): swap or drop them.
+    auto dm = [font](const std::string &in) {
+        std::string out;
+        for(char c : in) {
+            if(c == ' ' || TTF_GlyphIsProvided(font, (Uint16)(unsigned char)c)) {
+                out += c;
+            } else if(c == '/') {
+                out += '-';
+            } else if(c == '~') {
+                out += '.';
+            }
+        }
+        return out;
+    };
+
+    int pad = PAD * pixel_ratio;
+    int rowH = fontH + pad;
+    int left = 2 * pad;
+    int totalChars = (screen_width - 4 * pad) / charW;
+
+    // header: clock (Bold) and DEPARTURES (Heavy), then the feed status
+    char clock[16];
+    time_t nowWall = time(NULL);
+    strftime(clock, sizeof(clock), "%H:%M", localtime(&nowWall));
+
+    int top = 2 * pad;
+    int headH = fontH;
+    int x = left;
+
+    auto drawIn = [&](TTF_Font *f, const std::string &str, SDL_Color color) {
+        if(!f) {
+            f = font;
+        }
+        Label head;
+        head.setFont(f);
+        head.setColor(color);
+        head.setPosition(x, top);
+        head.setText(str);
+        head.draw(renderer);
+        int w = 0, h = 0;
+        TTF_SizeUTF8(f, str.c_str(), &w, &h);
+        x += w + 2 * charW;
+        headH = std::max(headH, h);
+    };
+
+    drawIn(transitClockFont, clock, style.white);
+    drawIn(transitHeadFont, "Departures", style.orange);
+
+    int statusH = 0, statusW = 0;
+    TTF_SizeUTF8(font, "M", &statusW, &statusH);
+    text.setColor(style.grey);
+    text.setPosition(x, top + headH - statusH);
+    text.setText(dm(fitText(std::to_string(transit->radiusMeters) + "m walk  tfl " + transit->status(), (screen_width - x) / charW)));
+    text.draw(renderer);
+
+    top += headH + 2 * pad;
+
+    // columns, in characters
+    const int badgeChars = 12;  // "Suffragette" fits
+    const int walkChars = 4;    // "10m"
+    const int dueChars = 12;    // "4  16  26"
+    int flexible = totalChars - 3 - badgeChars - walkChars - dueChars - 4;
+    bool showStop = flexible >= 36;
+    int destChars = showStop ? flexible * 55 / 100 : flexible;
+    if(destChars > 34) {
+        destChars = 34;  // keep columns together on wide screens
+    }
+    int stopChars = showStop ? flexible - destChars - 1 : 0;
+    if(stopChars > 36) {
+        stopChars = 36;
+    }
+
+    const int numChars = 3;     // row number, e.g. "12"
+    int xNum = left;
+    int xBadge = xNum + numChars * charW;
+    int xDest = xBadge + (badgeChars + 1) * charW;
+    int xStop = xDest + (destChars + 1) * charW;
+    int xWalk = xStop + (showStop ? (stopChars + 1) * charW : 0);
+    int xDue = xWalk + (walkChars + 1) * charW;
+
+    // column headings
+    text.setColor(style.grey);
+    text.setPosition(xBadge, top); text.setText(dm("LINE")); text.draw(renderer);
+    text.setPosition(xDest, top); text.setText(dm("TO")); text.draw(renderer);
+    if(showStop) {
+        text.setPosition(xStop, top); text.setText(dm("FROM")); text.draw(renderer);
+    }
+    text.setPosition(xWalk, top); text.setText(dm("WALK")); text.draw(renderer);
+    text.setPosition(xDue, top); text.setText(dm("MINS")); text.draw(renderer);
+    top += rowH;
+    lineRGBA(renderer, left, top - pad / 2, screen_width - left, top - pad / 2, style.grey_dark.r, style.grey_dark.g, style.grey_dark.b, 255);
+
+    std::vector<Departure> board = transit->snapshot();
+
+    int maxRows = (screen_height - top - rowH - 2 * pad) / rowH;
+    if(maxRows < 0) {
+        maxRows = 0;
+    }
+
+    auto now = std::chrono::steady_clock::now();
+    int shown = 0;
+
+    for(const Departure &dep : board) {
+        if(shown >= maxRows) {
+            break;
+        }
+
+        // row number, like the "1st / 2nd" on station boards
+        text.setColor(style.grey);
+        text.setPosition(xNum, top);
+        text.setText(dm(std::to_string(shown + 1)));
+        text.draw(renderer);
+
+        // line badge: filled box with the line name, like the status box labels
+        SDL_Color badge = lineBadgeColor(dep);
+        std::string lineText = fitText(dep.line, badgeChars - 1);
+        int badgeW = (lineText.length() + 1) * charW;
+        roundedBoxRGBA(renderer, xBadge, top, xBadge + badgeW, top + fontH, ROUND_RADIUS, badge.r, badge.g, badge.b, SDL_ALPHA_OPAQUE);
+        text.setColor(style.white);
+        text.setPosition(xBadge + charW / 2, top);
+        text.setText(dm(lineText));
+        text.draw(renderer);
+
+        text.setColor(style.white);
+        text.setPosition(xDest, top);
+        text.setText(dm(fitText(dep.destination, destChars)));
+        text.draw(renderer);
+
+        if(showStop) {
+            std::string from = dep.stopName;
+            if(!dep.stopIndicator.empty() && dep.stopIndicator.compare(0, 5, "Stop ") == 0) {
+                from += " " + dep.stopIndicator.substr(5);
+            }
+            text.setColor(style.grey);
+            text.setPosition(xStop, top);
+            text.setText(dm(fitText(from, stopChars)));
+            text.draw(renderer);
+        }
+
+        text.setColor(style.grey);
+        text.setPosition(xWalk, top);
+        text.setText(dm(std::to_string(dep.walkMinutes) + "m"));
+        text.draw(renderer);
+
+        // next arrivals; the first turns orange when it's time to leave
+        int x = xDue;
+        for(size_t i = 0; i < dep.arrivals.size() && i < 3; i++) {
+            int mins = std::chrono::duration_cast<std::chrono::seconds>(dep.arrivals[i] - now).count() / 60;
+            bool leaveNow = (i == 0 && mins - dep.walkMinutes <= 2);
+            text.setColor(leaveNow ? style.orange : style.planeColor);
+            text.setPosition(x, top);
+            text.setText(dm(std::to_string(mins)));
+            text.draw(renderer);
+            x += 4 * charW;
+        }
+
+        top += rowH;
+        shown++;
+    }
+
+    if(board.empty()) {
+        text.setColor(style.grey);
+        text.setPosition(left, top);
+        text.setText(dm("waiting for departures..."));
+        text.draw(renderer);
+    } else if((int)board.size() > shown) {
+        text.setColor(style.grey);
+        text.setPosition(left, top);
+        text.setText(dm("+" + std::to_string(board.size() - shown) + " more"));
+        text.draw(renderer);
+    }
+}
+
+// Bus stops and stations on the map. Labels with the next arrivals appear
+// once zoomed in far enough for them not to pile up.
+void View::drawTransitStops() {
+    if(!transit) {
+        return;
+    }
+
+    const float LABEL_MAX_DIST_KM = 3.0f;
+    const float MARKER_MAX_DIST_KM = 8.0f;
+    if(maxDist > MARKER_MAX_DIST_KM) {
+        return;  // at city scale the stops are just a blob
+    }
+    bool labels = maxDist < LABEL_MAX_DIST_KM;
+
+    int half = 2 * screen_uiscale;
+    auto now = std::chrono::steady_clock::now();
+
+    Label text;
+    text.setFont(mapFont);
+
+    // nearest stops first, so they win when labels would collide
+    std::vector<StopMarker> stops = transit->stopMarkers();
+    std::sort(stops.begin(), stops.end(), [](const StopMarker &a, const StopMarker &b) {
+        return a.walkMinutes < b.walkMinutes;
+    });
+    std::vector<SDL_Rect> placed;
+
+    for(const StopMarker &stop : stops) {
+        float dx, dy;
+        int x, y;
+        pxFromLonLat(&dx, &dy, stop.lon, stop.lat);
+        screenCoords(&x, &y, dx, dy);
+        if(outOfBounds(x, y)) {
+            continue;
+        }
+
+        SDL_Color color = stop.station ? SDL_Color{250, 123, 5, 255} : SDL_Color{220, 36, 31, 255};
+        boxRGBA(renderer, x - half, y - half, x + half, y + half, color.r, color.g, color.b, SDL_ALPHA_OPAQUE);
+
+        if(!labels) {
+            continue;
+        }
+
+        std::string id = stop.indicator;
+        if(id.compare(0, 5, "Stop ") == 0) {
+            id = id.substr(5);
+        }
+        if(stop.station || id.empty()) {
+            id = stop.name;
+            const std::string suffix = " Rail Station";
+            if(id.size() > suffix.size() && id.compare(id.size() - suffix.size(), suffix.size(), suffix) == 0) {
+                id.erase(id.size() - suffix.size());
+            }
+        }
+
+        // stacked like the plane labels: stop code, then the next two arrivals
+        int tx = x + half + mapFontWidth;
+        int ty = y - mapFontHeight / 2;
+
+        // skip the label if it would land on one already drawn
+        SDL_Rect box = {tx, ty, 8 * mapFontWidth, 3 * mapFontHeight};
+        bool collides = false;
+        for(const SDL_Rect &other : placed) {
+            if(SDL_HasIntersection(&box, &other)) {
+                collides = true;
+                break;
+            }
+        }
+        if(collides) {
+            continue;
+        }
+        placed.push_back(box);
+
+        text.setFont(mapBoldFont);
+        text.setColor(style.labelColor);
+        text.setPosition(tx, ty);
+        text.setText(id);
+        text.draw(renderer);
+        text.setFont(mapFont);
+        ty += mapFontHeight;
+
+        int shown = 0;
+        for(const auto &arrival : stop.next) {
+            int mins = std::chrono::duration_cast<std::chrono::seconds>(arrival.second - now).count() / 60;
+            if(mins < 0) {
+                continue;
+            }
+            std::string s = arrival.first + " " + std::to_string(mins) + "m";
+            // dim the ones you can't walk to in time
+            text.setColor(mins <= stop.walkMinutes ? style.grey_dark : style.subLabelColor);
+            text.setPosition(tx, ty);
+            text.setText(s);
+            text.draw(renderer);
+            ty += mapFontHeight;
+            if(++shown >= 2) {
+                break;
+            }
+        }
+    }
+
+    // home
+    float dx, dy;
+    int x, y;
+    pxFromLonLat(&dx, &dy, transit->lon, transit->lat);
+    screenCoords(&x, &y, dx, dy);
+    if(!outOfBounds(x, y)) {
+        int r = 3 * screen_uiscale;
+        circleRGBA(renderer, x, y, r, style.white.r, style.white.g, style.white.b, SDL_ALPHA_OPAQUE);
+        lineRGBA(renderer, x - 2 * r, y, x + 2 * r, y, style.white.r, style.white.g, style.white.b, SDL_ALPHA_OPAQUE);
+        lineRGBA(renderer, x, y - 2 * r, x, y + 2 * r, style.white.r, style.white.g, style.white.b, SDL_ALPHA_OPAQUE);
+        if(labels) {
+            text.setColor(style.white);
+            text.setPosition(x + 2 * r + mapFontWidth, y - mapFontHeight / 2);
+            text.setText("home");
+            text.draw(renderer);
+        }
+    }
 }
 
 View::View(AppData *appData){
@@ -1196,6 +1632,18 @@ View::View(AppData *appData){
 
     // Display options
     screen_uiscale          = 1;
+    pixel_ratio             = 1;
+
+    page                    = PAGE_MAP;
+    transit                 = NULL;
+    rotateSeconds           = 0;
+    transitScale            = 1.5;
+    transitFont             = NULL;
+    transitHeadFont         = NULL;
+    transitClockFont        = NULL;
+    transitFontWidth        = 0;
+    transitFontHeight       = 0;
+    pageShownTime           = std::chrono::steady_clock::now();
     screen_width            = 0;
     screen_height           = 0;    
     screen_depth            = 32;

@@ -25,3 +25,7 @@ mapnames
 
 
 viz1090
+
+# local / not redistributable
+home.conf
+font/LondonUnderground*.ttf

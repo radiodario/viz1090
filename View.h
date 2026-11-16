@@ -35,10 +35,14 @@
 #include "AppData.h"
 #include "Map.h"
 #include "Style.h"
+#include "TransitBoard.h"
 #include "SDL2/SDL.h"
 #include "SDL2/SDL_ttf.h" 
 #include <chrono>
+#include <csignal>
 #include <string>
+
+extern volatile sig_atomic_t viewSnapshotRequested;
 
 
 //defs - should all move to config file setup
@@ -121,7 +125,25 @@ class View {
 		void registerClick(int tapcount, int x, int y);
 		void registerMouseMove(int x, int y);
 		void draw();
-		
+
+		// pages: the aircraft map, and the TfL transit board
+		enum Page { PAGE_MAP, PAGE_TRANSIT };
+		Page page;
+		TransitBoard *transit;          // NULL unless --transit is given
+		float rotateSeconds;            // 0 = no automatic page rotation
+		float transitScale;             // board text size relative to the map UI
+		TTF_Font *transitFont;          // London Underground Regular
+		TTF_Font *transitHeadFont;      // London Underground Heavy, for the heading
+		TTF_Font *transitClockFont;     // London Underground Bold (digits and ':')
+		int transitFontWidth;
+		int transitFontHeight;
+		std::chrono::steady_clock::time_point pageShownTime;
+		void presentFrame();            // present, saving a snapshot if requested
+		void showPage(Page newPage);
+		void togglePage();
+		void drawTransit();
+		void drawTransitStops();        // stop markers on the map page
+
 		void SDL_init();
 		void font_init();
 
@@ -162,6 +184,7 @@ class View {
 
 	    int screen_upscale;
 	    int screen_uiscale;
+	    int pixel_ratio;     // drawable pixels per window point (2 on Retina)
 	    int screen_width;
 	    int screen_height;
 	    int screen_depth;

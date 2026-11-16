@@ -29,8 +29,9 @@ sudo apt-get install build-essential
 
 1. Install SDL and RTL-SDR libraries
 ```
-sudo apt-get install libsdl2-dev libsdl2-ttf-dev libsdl2-gfx-dev librtlsdr-dev
+sudo apt-get install libsdl2-dev libsdl2-ttf-dev libsdl2-gfx-dev librtlsdr-dev libcurl4-openssl-dev nlohmann-json3-dev
 ```
+(libcurl and nlohmann-json are for the TfL departures page. On macOS: `brew install sdl2 sdl2_ttf sdl2_gfx nlohmann-json` and build with `make CXX=clang++ CXXFLAGS="-O2 -std=c++11 -I/opt/homebrew/include" CFLAGS="-O2 -I/opt/homebrew/include" LDFLAGS=-L/opt/homebrew/lib`.)
 1b. (Raspberry Pi only)
 If you are running viz1090 on the Raspbian desktop (or any form of X) you can skip this step, but if you want to be able to start it directly from the command line, do the following to build SDL with KMS driver support. This is taken from [this stackoverflow question](https://stackoverflow.com/questions/57672568/sdl2-on-raspberry-pi-without-x)
 
@@ -132,6 +133,30 @@ viz1090 will open an SDL window set to the resolution of your screen.
 | --screensize [width] [height]	| Specify a resolution, otherwise use resolution of display | 
 | --uiscale [scale]				| Scale up UI elements by integer amounts for high resolution screen | 
 | --fullscreen					| Render fullscreen rather than in a window | 
+| --screenindex [i]				| Display to open on (0 = main) | 
+| --zoom [km]					| Initial map radius in km (default 25) | 
+| --transit						| Add a TfL departures page; press T to switch pages | 
+| --transit-loc [lat] [lon]		| Location for departures (default --lat/--lon) | 
+| --transit-radius [m]			| Search radius for stops (default 1000); stops over 15 min walk are dropped | 
+| --transit-scale [factor]		| Departures text size relative to the map UI | 
+| --transit-start				| Start on the departures page | 
+| --rotate [seconds]			| Alternate between map and departures | 
+
+High-DPI (Retina) displays render at native resolution. Send `SIGUSR1` (`pkill -USR1 viz1090`) to save the current frame to `/tmp/viz1090-snapshot.bmp`.
+
+### TFL DEPARTURES
+
+With `--transit`, viz1090 finds every bus stop and TfL rail station within walking distance, polls arrivals from the [TfL Unified API](https://api.tfl.gov.uk) every 30 seconds, and lists one row per line and direction from the nearest stop, keeping only arrivals you can still walk to. Walking times come from TfL's journey planner and are cached in `~/.cache/viz1090/`. Set `TFL_APP_KEY` to use an API key. Stops and their next arrivals also appear on the map when zoomed in.
+
+The board uses the [London Underground dot-matrix typeface](https://github.com/petykowski/London-Underground-Dot-Matrix-Typeface), which is not included here: run `./getfonts.sh` to download it.
+
+### OPENSTREETMAP LAYERS
+
+`getosm.py --lat LAT --lon LON --radius 4` downloads roads, railways and water around a point (plus runways and airport codes within `--airport-radius`, default 60 km) from OpenStreetMap via Overpass, and writes `roads_major.bin`, `roads_minor.bin`, `rail.bin`, `water.bin`, `airportdata.bin` and `airportnames`. viz1090 draws them under the base map when present. Map data © OpenStreetMap contributors, ODbL.
+
+### HACKRF
+
+`run_hackrf.sh` runs [dump1090-fa](https://github.com/flightaware/dump1090) built with HackRF support (`make HACKRF=yes`) from `../dump1090-fa`, restarts it if the HackRF drops off USB, and starts viz1090 with the departures page. Put your location in `home.conf` (`LAT=...` and `LON=...` lines).
 
 ### MAPS
 

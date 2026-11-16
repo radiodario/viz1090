@@ -66,6 +66,13 @@ void Input::getInput()
 						exit(0);
 					break;
 
+					case SDLK_t:
+						// plain T only, so Cmd/Alt/Ctrl shortcuts don't flip pages
+						if((event.key.keysym.mod & (KMOD_GUI | KMOD_ALT | KMOD_CTRL)) == 0 && !event.key.repeat) {
+							view->togglePage();
+						}
+					break;
+
 					case SDLK_MINUS:
                         view->maxDist *= 1.0 + 0.5 * sgn(1);
                         if(view->maxDist < 0.001f) {
@@ -157,8 +164,8 @@ void Input::getInput()
 
 			case SDL_MOUSEBUTTONUP:;
 				if(event.button.which != SDL_TOUCH_MOUSEID) {
-					touchx = event.motion.x;
-					touchy = event.motion.y;
+					touchx = event.button.x * view->pixel_ratio;
+					touchy = event.button.y * view->pixel_ratio;
 					tapCount = event.button.clicks;
 
 					view->registerClick(tapCount, touchx, touchy);
@@ -168,10 +175,10 @@ void Input::getInput()
 			case SDL_MOUSEMOTION:;
 
 				if(event.motion.which != SDL_TOUCH_MOUSEID) {
-					view->registerMouseMove(event.motion.x, event.motion.y);
-					
+					view->registerMouseMove(event.motion.x * view->pixel_ratio, event.motion.y * view->pixel_ratio);
+
 					if (SDL_GetMouseState(NULL, NULL) & SDL_BUTTON(SDL_BUTTON_LEFT)) {
-						view->moveCenterRelative(event.motion.xrel, event.motion.yrel);
+						view->moveCenterRelative(event.motion.xrel * view->pixel_ratio, event.motion.yrel * view->pixel_ratio);
 					}					
 				}
 				break;				
