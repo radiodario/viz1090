@@ -36,6 +36,7 @@ struct StopMarker {
     bool station;
     double lat;
     double lon;
+    float heading;   // direction buses leave the stop, degrees from north; -1 if unknown
     int walkMinutes;
     std::vector<std::pair<std::string, std::chrono::steady_clock::time_point>> next;  // (line, arrival)
 };
@@ -68,6 +69,7 @@ private:
         bool station;
         double lat;
         double lon;
+        float heading;
         int walkMinutes;
         bool walkRouted;  // true once walkMinutes comes from a real walking route
     };

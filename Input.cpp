@@ -66,6 +66,13 @@ void Input::getInput()
 						exit(0);
 					break;
 
+					case SDLK_b:
+						// mini departures board on the map
+						if((event.key.keysym.mod & (KMOD_GUI | KMOD_ALT | KMOD_CTRL)) == 0 && !event.key.repeat) {
+							view->miniBoard = !view->miniBoard;
+						}
+					break;
+
 					case SDLK_t:
 						// plain T only, so Cmd/Alt/Ctrl shortcuts don't flip pages
 						if((event.key.keysym.mod & (KMOD_GUI | KMOD_ALT | KMOD_CTRL)) == 0 && !event.key.repeat) {

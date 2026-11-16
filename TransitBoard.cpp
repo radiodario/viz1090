@@ -30,6 +30,17 @@ static int walkMinutesFor(double meters) {
     return (int)std::ceil(meters * 1.25 / 80.0);
 }
 
+// "N", "NE", ... -> degrees from north, or -1
+static float compassToDegrees(const std::string &point) {
+    const char *names[] = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"};
+    for(int i = 0; i < 8; i++) {
+        if(point == names[i]) {
+            return i * 45.0f;
+        }
+    }
+    return -1.0f;
+}
+
 static bool isTransitMode(const std::string &mode) {
     // national-rail is not covered by TfL arrivals, so leave it out for now
     return mode == "bus" || mode == "overground" || mode == "tube" ||
@@ -166,6 +177,14 @@ bool TransitBoard::fetchStops() {
             stop.station = sp.value("stopType", "") != "NaptanPublicBusCoachTram";
             stop.lat = sp.value("lat", 0.0);
             stop.lon = sp.value("lon", 0.0);
+            stop.heading = -1.0f;
+            if(sp.contains("additionalProperties")) {
+                for(const auto &prop : sp["additionalProperties"]) {
+                    if(prop.value("key", "") == "CompassPoint") {
+                        stop.heading = compassToDegrees(prop.value("value", ""));
+                    }
+                }
+            }
 
             bool served = false;
             if(sp.contains("lineModeGroups")) {
@@ -292,6 +311,7 @@ bool TransitBoard::fetchArrivals() {
         m.name = stop.name;
         m.indicator = stop.indicator;
         m.station = stop.station;
+        m.heading = stop.heading;
         m.lat = stop.lat;
         m.lon = stop.lon;
         m.walkMinutes = stop.walkMinutes;

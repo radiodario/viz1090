@@ -135,7 +135,7 @@ viz1090 will open an SDL window set to the resolution of your screen.
 | --fullscreen					| Render fullscreen rather than in a window | 
 | --screenindex [i]				| Display to open on (0 = main) | 
 | --zoom [km]					| Initial map radius in km (default 25) | 
-| --transit						| Add a TfL departures page; press T to switch pages | 
+| --transit						| Add a TfL departures page; press T to switch pages, B for the mini board on the map | 
 | --transit-loc [lat] [lon]		| Location for departures (default --lat/--lon) | 
 | --transit-radius [m]			| Search radius for stops (default 1000); stops over 15 min walk are dropped | 
 | --transit-scale [factor]		| Departures text size relative to the map UI | 

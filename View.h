@@ -143,6 +143,9 @@ class View {
 		void togglePage();
 		void drawTransit();
 		void drawTransitStops();        // stop markers on the map page
+		void drawMiniBoard();           // next few departures over the map
+		bool miniBoard;                 // toggled with B
+		TTF_Font *miniBoardFont;
 
 		void SDL_init();
 		void font_init();

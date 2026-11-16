@@ -253,6 +253,7 @@ void View::font_init() {
     // London Underground dot-matrix typeface (github.com/petykowski/London-Underground-Dot-Matrix-Typeface)
     transitFont = loadFont("font/LondonUndergroundRegular.ttf", transitSize);
     transitHeadFont = loadFont("font/LondonUndergroundHeavy.ttf", transitSize * 3 / 2);
+    miniBoardFont = loadFont("font/LondonUndergroundRegular.ttf", 9 * screen_uiscale);
     transitClockFont = loadFont("font/LondonUndergroundBold.ttf", transitSize * 3 / 2);
     if(transitFont) {
         TTF_SizeUTF8(transitFont, "M", &transitFontWidth, &transitFontHeight);
@@ -1265,6 +1266,10 @@ void View::draw() {
         drawPlanes();  
     }
 
+    if(transit && miniBoard) {
+        drawMiniBoard();
+    }
+
     drawStatus();
     //drawMouse();
     drawClick();
@@ -1309,6 +1314,21 @@ static SDL_Color lineBadgeColor(const Departure &dep) {
     return {127, 127, 127, 255};
 }
 
+// The dot-matrix fonts lack some glyphs ('/', '~', brackets): swap or drop them.
+static std::string dotMatrixText(TTF_Font *font, const std::string &in) {
+    std::string out;
+    for(char c : in) {
+        if(c == ' ' || TTF_GlyphIsProvided(font, (Uint16)(unsigned char)c)) {
+            out += c;
+        } else if(c == '/') {
+            out += '-';
+        } else if(c == '~') {
+            out += '.';
+        }
+    }
+    return out;
+}
+
 static std::string fitText(const std::string &text, int chars) {
     if(chars <= 0) {
         return "";
@@ -1334,19 +1354,7 @@ void View::drawTransit() {
     text.setFont(font);
 
     // The dot-matrix font lacks some glyphs ('/', '~', brackets): swap or drop them.
-    auto dm = [font](const std::string &in) {
-        std::string out;
-        for(char c : in) {
-            if(c == ' ' || TTF_GlyphIsProvided(font, (Uint16)(unsigned char)c)) {
-                out += c;
-            } else if(c == '/') {
-                out += '-';
-            } else if(c == '~') {
-                out += '.';
-            }
-        }
-        return out;
-    };
+    auto dm = [font](const std::string &in) { return dotMatrixText(font, in); };
 
     int pad = PAD * pixel_ratio;
     int rowH = fontH + pad;
@@ -1506,6 +1514,77 @@ void View::drawTransit() {
     }
 }
 
+// The next few departures in a small panel at the bottom right of the map.
+void View::drawMiniBoard() {
+    TTF_Font *font = miniBoardFont ? miniBoardFont : mapFont;
+    const int ROWS = 4;
+
+    std::vector<Departure> board = transit->snapshot();
+    if(board.empty()) {
+        return;
+    }
+    if((int)board.size() > ROWS) {
+        board.resize(ROWS);
+    }
+
+    int charW = 0, fontH = 0;
+    TTF_SizeUTF8(font, "M", &charW, &fontH);
+    int pad = PAD * pixel_ratio;
+    int rowH = fontH + pad / 2;
+
+    const int numChars = 2, badgeChars = 5, destChars = 20, minsChars = 7;
+    int boxW = (numChars + badgeChars + destChars + minsChars + 3) * charW + 2 * pad;
+    int boxH = (int)board.size() * rowH + 2 * pad;
+    int left = screen_width - boxW - pad;
+    int top = screen_height - boxH - pad;
+
+    roundedBoxRGBA(renderer, left, top, left + boxW, top + boxH, ROUND_RADIUS, 0, 0, 0, 220);
+    roundedRectangleRGBA(renderer, left, top, left + boxW, top + boxH, ROUND_RADIUS, style.grey_dark.r, style.grey_dark.g, style.grey_dark.b, 255);
+
+    Label text;
+    text.setFont(font);
+    auto now = std::chrono::steady_clock::now();
+    int y = top + pad;
+
+    for(size_t i = 0; i < board.size(); i++) {
+        const Departure &dep = board[i];
+        int x = left + pad;
+
+        text.setColor(style.grey);
+        text.setPosition(x, y);
+        text.setText(dotMatrixText(font, std::to_string(i + 1)));
+        text.draw(renderer);
+        x += (numChars + 1) * charW;
+
+        SDL_Color badge = lineBadgeColor(dep);
+        std::string lineText = dep.line == "Suffragette" ? "Suff" : fitText(dep.line, badgeChars - 1);
+        roundedBoxRGBA(renderer, x, y, x + (int)(lineText.length() + 1) * charW, y + fontH, ROUND_RADIUS, badge.r, badge.g, badge.b, SDL_ALPHA_OPAQUE);
+        text.setColor(style.white);
+        text.setPosition(x + charW / 2, y);
+        text.setText(dotMatrixText(font, lineText));
+        text.draw(renderer);
+        x += (badgeChars + 1) * charW;
+
+        text.setColor(style.white);
+        text.setPosition(x, y);
+        text.setText(dotMatrixText(font, fitText(dep.destination, destChars)));
+        text.draw(renderer);
+        x += (destChars + 1) * charW;
+
+        for(size_t j = 0; j < dep.arrivals.size() && j < 2; j++) {
+            int mins = std::chrono::duration_cast<std::chrono::seconds>(dep.arrivals[j] - now).count() / 60;
+            bool leaveNow = (j == 0 && mins - dep.walkMinutes <= 2);
+            text.setColor(leaveNow ? style.orange : style.planeColor);
+            text.setPosition(x, y);
+            text.setText(dotMatrixText(font, std::to_string(mins)));
+            text.draw(renderer);
+            x += 3 * charW;
+        }
+
+        y += rowH;
+    }
+}
+
 // Bus stops and stations on the map. Labels with the next arrivals appear
 // once zoomed in far enough for them not to pile up.
 void View::drawTransitStops() {
@@ -1543,7 +1622,20 @@ void View::drawTransitStops() {
         }
 
         SDL_Color color = stop.station ? SDL_Color{250, 123, 5, 255} : SDL_Color{220, 36, 31, 255};
-        boxRGBA(renderer, x - half, y - half, x + half, y + half, color.r, color.g, color.b, SDL_ALPHA_OPAQUE);
+        if(stop.heading >= 0 && !stop.station) {
+            // arrow pointing the way buses leave the stop
+            float hx = sin(stop.heading * M_PI / 180.0f);
+            float hy = -cos(stop.heading * M_PI / 180.0f);
+            float len = 2.5f * half;
+            float wid = 1.5f * half;
+            filledTrigonRGBA(renderer,
+                             x + hx * len, y + hy * len,
+                             x - hx * len * 0.6f - hy * wid, y - hy * len * 0.6f + hx * wid,
+                             x - hx * len * 0.6f + hy * wid, y - hy * len * 0.6f - hx * wid,
+                             color.r, color.g, color.b, SDL_ALPHA_OPAQUE);
+        } else {
+            boxRGBA(renderer, x - half, y - half, x + half, y + half, color.r, color.g, color.b, SDL_ALPHA_OPAQUE);
+        }
 
         if(!labels) {
             continue;
@@ -1640,6 +1732,8 @@ View::View(AppData *appData){
     transitScale            = 1.5;
     transitFont             = NULL;
     transitHeadFont         = NULL;
+    miniBoard               = true;
+    miniBoardFont           = NULL;
     transitClockFont        = NULL;
     transitFontWidth        = 0;
     transitFontHeight       = 0;
