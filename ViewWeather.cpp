@@ -219,12 +219,13 @@ void View::drawWeatherGlyph(int code, bool isDay, int cx, int cy, int px) {
 // Page layout
 //
 
-static const SDL_Color PANEL_FILL = {12, 22, 84, 235};
-static const SDL_Color PANEL_EDGE = {96, 146, 236, 255};
-static const SDL_Color TAB_ORANGE = {246, 140, 30, 255};
-static const SDL_Color TEXT_PALE = {200, 220, 255, 255};
-static const SDL_Color TEMP_LOW = {130, 190, 255, 255};
-static const SDL_Color RAIN_BLUE = {90, 170, 255, 255};
+// same palette as the map and departures pages: black, greys, white,
+// teal for data, orange for the headline
+static const SDL_Color PANEL_EDGE = {64, 64, 64, 255};
+static const SDL_Color TAB_ORANGE = {253, 151, 31, 255};
+static const SDL_Color TEXT_PALE = {127, 127, 127, 255};
+static const SDL_Color TEMP_LOW = {127, 127, 127, 255};
+static const SDL_Color RAIN_BLUE = {0, 255, 174, 255};
 
 static std::string compass(int degrees) {
     const char *names[] = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"};
@@ -277,13 +278,12 @@ static int putTemp(SDL_Renderer *r, TTF_Font *font, float t, int x, int y, SDL_C
 }
 
 static void drawPanel(SDL_Renderer *r, TTF_Font *tabFont, const std::string &title, int x, int y, int w, int h) {
-    roundedBoxRGBA(r, x, y, x + w, y + h, 6, PANEL_FILL.r, PANEL_FILL.g, PANEL_FILL.b, PANEL_FILL.a);
-    roundedRectangleRGBA(r, x, y, x + w, y + h, 6, PANEL_EDGE.r, PANEL_EDGE.g, PANEL_EDGE.b, 255);
-    // orange title tab on the top edge
+    roundedRectangleRGBA(r, x, y, x + w, y + h, 4, PANEL_EDGE.r, PANEL_EDGE.g, PANEL_EDGE.b, 255);
+    // grey title sitting on the top edge, like the board's column headings
     int th = fontHeight(tabFont);
-    int tw = textWidth(tabFont, title) + th;
-    roundedBoxRGBA(r, x + th / 2, y - th / 2, x + th / 2 + tw, y + th / 2, 4, TAB_ORANGE.r, TAB_ORANGE.g, TAB_ORANGE.b, 255);
-    putText(r, tabFont, title, x + th, y - th / 2, {16, 18, 60, 255});
+    int tw = textWidth(tabFont, title);
+    boxRGBA(r, x + th / 2, y - th / 2, x + th + tw, y + th / 2, 0, 0, 0, 255);
+    putText(r, tabFont, title, x + th * 3 / 4, y - th / 2, {127, 127, 127, 255});
 }
 
 void View::drawWeather() {
@@ -292,27 +292,25 @@ void View::drawWeather() {
     float u = H / 36.0f;
     int m = (int)(u * 0.7f);
 
-    // deep blue gradient background
-    for(int y = 0; y < H; y++) {
-        float t = (float)y / H;
-        lineRGBA(renderer, 0, y, W, y, (Uint8)(8 + 26 * t), (Uint8)(14 + 46 * t), (Uint8)(60 + 90 * t), 255);
-    }
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+    SDL_RenderClear(renderer);
 
     WeatherSnapshot w = weather->snapshot();
     time_t nowWall = time(NULL);
 
-    // header bar
-    int headH = (int)(2.4f * u);
-    for(int y = 0; y < headH; y++) {
-        float t = (float)y / headH;
-        lineRGBA(renderer, 0, y, W, y, (Uint8)(250 - 30 * t), (Uint8)(160 - 60 * t), (Uint8)(40 - 20 * t), 255);
-    }
-    lineRGBA(renderer, 0, headH, W, headH, 255, 230, 160, 255);
-    putText(renderer, weatherHeadFont, "Local Forecast", m, (headH - fontHeight(weatherHeadFont)) / 2, {16, 18, 60, 255});
-    char clock[32];
-    strftime(clock, sizeof(clock), "%a %d %b  %H:%M", localtime(&nowWall));
-    std::string right = std::string(clock);
-    putText(renderer, weatherTextFont, right, W - m - textWidth(weatherTextFont, right), (headH - fontHeight(weatherTextFont)) / 2, {16, 18, 60, 255});
+    // heading like the departures board: clock, then "Weather" in orange
+    char clock[16];
+    strftime(clock, sizeof(clock), "%H:%M", localtime(&nowWall));
+    int hx = m;
+    int hy = m;
+    hx += putText(renderer, transitClockFont ? transitClockFont : weatherHeadFont, clock, hx, hy, {255, 255, 255, 255}) + m;
+    hx += putText(renderer, weatherHeadFont, "Weather", hx, hy, TAB_ORANGE) + m;
+    char date[32];
+    strftime(date, sizeof(date), "%A %d %B", localtime(&nowWall));
+    int headH = std::max(fontHeight(weatherHeadFont), fontHeight(transitClockFont));
+    putText(renderer, weatherTextFont, date, hx, hy + headH - fontHeight(weatherTextFont), TEXT_PALE);
+    headH += m;
+    lineRGBA(renderer, m, headH + m / 2, W - m, headH + m / 2, PANEL_EDGE.r, PANEL_EDGE.g, PANEL_EDGE.b, 255);
 
     if(!w.valid) {
         putText(renderer, weatherTextFont, "Fetching forecast... " + weather->status(), m, headH + 2 * m, TEXT_PALE);
@@ -380,7 +378,7 @@ void View::drawWeather() {
             // rain bar, 2 mm per 15 min = full height
             int bar = (int)(std::min(1.0f, s.precip / 2.0f) * maxBar);
             int bw = colW / 3;
-            boxRGBA(renderer, cx - bw / 2, base - maxBar, cx + bw / 2, base, 20, 40, 110, 255);
+            boxRGBA(renderer, cx - bw / 2, base - maxBar, cx + bw / 2, base, 24, 24, 28, 255);
             if(bar > 0) {
                 boxRGBA(renderer, cx - bw / 2, base - bar, cx + bw / 2, base, RAIN_BLUE.r, RAIN_BLUE.g, RAIN_BLUE.b, 255);
             }
@@ -453,7 +451,7 @@ void View::drawWeather() {
         // night shading
         for(int i = 0; i < n - 1; i++) {
             if(!w.hours[i].isDay) {
-                boxRGBA(renderer, xAt(i), gy0, xAt(i + 1), gy1, 4, 10, 50, 255);
+                boxRGBA(renderer, xAt(i), gy0, xAt(i + 1), gy1, 18, 18, 22, 255);
             }
         }
         // rain chance bars
@@ -461,7 +459,7 @@ void View::drawWeather() {
             if(w.hours[i].precipProb > 0) {
                 int bh = (gy1 - gy0) * w.hours[i].precipProb / 100;
                 int bw = std::max(1, (gx1 - gx0) / n - 1);
-                boxRGBA(renderer, xAt(i), gy1 - bh, xAt(i) + bw, gy1, 40, 90, 190, 255);
+                boxRGBA(renderer, xAt(i), gy1 - bh, xAt(i) + bw, gy1, 24, 70, 62, 255);
             }
         }
         // 24h marker
@@ -474,11 +472,11 @@ void View::drawWeather() {
         // temperature line
         int width = std::max(2, (int)(u * 0.15f));
         for(int i = 1; i < n; i++) {
-            thickLineRGBA(renderer, xAt(i - 1), yAt(w.hours[i - 1].temp), xAt(i), yAt(w.hours[i].temp), width, 255, 196, 40, 255);
+            thickLineRGBA(renderer, xAt(i - 1), yAt(w.hours[i - 1].temp), xAt(i), yAt(w.hours[i].temp), width, 255, 255, 255, 255);
         }
         // axis labels
-        putTemp(renderer, weatherSmallFont, tMax, m + (int)(0.5f * u), gy0 - fontHeight(weatherSmallFont) / 2, {255, 196, 40, 255});
-        putTemp(renderer, weatherSmallFont, tMin, m + (int)(0.5f * u), gy1 - fontHeight(weatherSmallFont) / 2, {255, 196, 40, 255});
+        putTemp(renderer, weatherSmallFont, tMax, m + (int)(0.5f * u), gy0 - fontHeight(weatherSmallFont) / 2, TEXT_PALE);
+        putTemp(renderer, weatherSmallFont, tMin, m + (int)(0.5f * u), gy1 - fontHeight(weatherSmallFont) / 2, TEXT_PALE);
         const char *marks[] = {"Now", "+12h", "+24h", "+36h", "+48h"};
         for(int k = 0; k < 5; k++) {
             int i = std::min(n - 1, k * 12);
