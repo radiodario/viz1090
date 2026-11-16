@@ -254,6 +254,11 @@ void View::font_init() {
     transitFont = loadFont("font/LondonUndergroundRegular.ttf", transitSize);
     transitHeadFont = loadFont("font/LondonUndergroundHeavy.ttf", transitSize * 3 / 2);
     miniBoardFont = loadFont("font/LondonUndergroundRegular.ttf", 9 * screen_uiscale);
+    stopNameFont = loadFont("font/TerminusTTF-4.46.0.ttf", 8 * screen_uiscale);
+    if(stopNameFont) {
+        int w = 0;
+        TTF_SizeUTF8(stopNameFont, "M", &w, &stopNameFontHeight);
+    }
     transitClockFont = loadFont("font/LondonUndergroundBold.ttf", transitSize * 3 / 2);
     if(transitFont) {
         TTF_SizeUTF8(transitFont, "M", &transitFontWidth, &transitFontHeight);
@@ -1750,7 +1755,19 @@ void View::drawTransitStops() {
         int ty = y - mapFontHeight / 2;
 
         // skip the label if it would land on one already drawn
-        SDL_Rect box = {tx, ty, 8 * mapFontWidth, 3 * mapFontHeight};
+        int smallH = stopNameFont ? stopNameFontHeight : mapFontHeight;
+        bool showName = !stop.station && stopNameFont;
+        int labelW = 8 * mapFontWidth;
+        if(showName) {
+            int nameW = 0, nameH = 0;
+            TTF_SizeUTF8(stopNameFont, stop.name.c_str(), &nameW, &nameH);
+            labelW = std::max(labelW, nameW);
+        } else if(stop.station) {
+            int nameW = 0, nameH = 0;
+            TTF_SizeUTF8(mapBoldFont, id.c_str(), &nameW, &nameH);
+            labelW = std::max(labelW, nameW);
+        }
+        SDL_Rect box = {tx, ty, labelW, 3 * mapFontHeight + (showName ? smallH : 0)};
         bool collides = false;
         for(const SDL_Rect &other : placed) {
             if(SDL_HasIntersection(&box, &other)) {
@@ -1768,8 +1785,18 @@ void View::drawTransitStops() {
         text.setPosition(tx, ty);
         text.setText(id);
         text.draw(renderer);
-        text.setFont(mapFont);
         ty += mapFontHeight;
+
+        // full stop name in small type under the code
+        if(showName) {
+            text.setFont(stopNameFont);
+            text.setColor(style.grey);
+            text.setPosition(tx, ty);
+            text.setText(stop.name);
+            text.draw(renderer);
+            ty += smallH;
+        }
+        text.setFont(mapFont);
 
         int shown = 0;
         for(const auto &arrival : stop.next) {
@@ -1827,6 +1854,8 @@ View::View(AppData *appData){
     miniBoard               = true;
     hideCursor              = false;
     miniBoardFont           = NULL;
+    stopNameFont            = NULL;
+    stopNameFontHeight      = 0;
     transitClockFont        = NULL;
     transitFontWidth        = 0;
     transitFontHeight       = 0;

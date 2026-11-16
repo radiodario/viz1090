@@ -149,6 +149,8 @@ class View {
 		std::map<std::string, float> stopHeadingCache;
 		bool miniBoard;                 // toggled with B
 		TTF_Font *miniBoardFont;
+		TTF_Font *stopNameFont;         // small type for stop names on the map
+		int stopNameFontHeight;
 
 		void SDL_init();
 		void font_init();
