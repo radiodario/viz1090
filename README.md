@@ -144,7 +144,8 @@ viz1090 will open an SDL window set to the resolution of your screen.
 | --transit-radius [m]			| Search radius for stops (default 1000); stops over 15 min walk are dropped | 
 | --transit-scale [factor]		| Departures text size relative to the map UI | 
 | --transit-start				| Start on the departures page | 
-| --rotate [seconds]			| Alternate between map and departures | 
+| --rotate [seconds]			| Rotate pages, the same time each | 
+| --page-times [map,board,weather] | Rotate pages with their own times in seconds; weather `cycle` shows one full pass of its segments | 
 
 High-DPI (Retina) displays render at native resolution. Send `SIGUSR1` (`pkill -USR1 viz1090`) to save the current frame to `/tmp/viz1090-snapshot.bmp`.
 

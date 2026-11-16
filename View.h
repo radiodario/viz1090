@@ -166,6 +166,9 @@ class View {
 		TTF_Font *weatherTextFont;
 		TTF_Font *weatherSmallFont;
 		float rotateSeconds;            // 0 = no automatic page rotation
+		bool usePageTimes;              // --page-times given
+		float pageSeconds[3];           // per page (map, departures, weather); weather 0 = one full cycle
+		float weatherCycleSeconds();
 		float transitScale;             // board text size relative to the map UI
 		TTF_Font *transitFont;          // London Underground Regular
 		TTF_Font *transitHeadFont;      // London Underground Heavy, for the heading

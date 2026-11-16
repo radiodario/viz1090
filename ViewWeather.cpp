@@ -531,6 +531,14 @@ static std::string upper(std::string s) {
     return s;
 }
 
+float View::weatherCycleSeconds() {
+    float total = 0;
+    for(int i = 0; i < SEG_COUNT; i++) {
+        total += SEGMENT_SECONDS[i];
+    }
+    return total;
+}
+
 void View::nextWeatherSegment(int dir) {
     weatherSegment = ((weatherSegment + dir) % SEG_COUNT + SEG_COUNT) % SEG_COUNT;
     weatherSegmentShown = std::chrono::steady_clock::now();

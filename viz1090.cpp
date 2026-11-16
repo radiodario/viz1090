@@ -68,7 +68,8 @@ void showHelp(void) {
 "--transit-radius <meters>        Walking radius for stops (default: 1000, ~15 min)\n"
 "--transit-scale <factor>         Departures text size vs map text (default: 1.5)\n"
 "--transit-start                  Start on the departures page\n"
-"--rotate <seconds>               Alternate between map and departures\n"
+"--rotate <seconds>               Rotate pages, the same time each\n"
+"--page-times <map,board,weather> Rotate pages with their own times; weather 'cycle' = one full pass\n"
     );
 }
 
@@ -146,6 +147,18 @@ int main(int argc, char **argv) {
         } else if (!strcmp(argv[j],"--transit-start")) {
             transitEnabled = true;
             transitStart = true;
+        } else if (!strcmp(argv[j],"--page-times") && more) {
+            // e.g. 60,30,cycle: map 60 s, departures 30 s, one full weather cycle
+            transitEnabled = true;
+            weatherEnabled = true;
+            view.usePageTimes = true;
+            char spec[64];
+            strncpy(spec, argv[++j], sizeof(spec) - 1);
+            spec[sizeof(spec) - 1] = 0;
+            int i = 0;
+            for(char *tok = strtok(spec, ","); tok && i < 3; tok = strtok(NULL, ","), i++) {
+                view.pageSeconds[i] = strcmp(tok, "cycle") == 0 ? 0 : atof(tok);
+            }
         } else if (!strcmp(argv[j],"--rotate") && more) {
             transitEnabled = true;
             view.rotateSeconds = atof(argv[++j]);

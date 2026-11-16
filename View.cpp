@@ -1325,9 +1325,15 @@ void View::draw() {
         SDL_Delay(static_cast<Uint32>(targetFrameTime - lastFrameTime));
     }
  
-    if((transit || weather) && rotateSeconds > 0 &&
-       std::chrono::steady_clock::now() - pageShownTime > std::chrono::milliseconds((int)(rotateSeconds * 1000))) {
-        togglePage();
+    // page rotation: per-page times if given (--page-times), else --rotate for all
+    if(transit || weather) {
+        float seconds = usePageTimes ? pageSeconds[page] : rotateSeconds;
+        if(usePageTimes && page == PAGE_WEATHER && seconds <= 0) {
+            seconds = weatherCycleSeconds();  // "cycle": one full pass of the weather segments
+        }
+        if(seconds > 0 && std::chrono::steady_clock::now() - pageShownTime > std::chrono::milliseconds((int)(seconds * 1000))) {
+            togglePage();
+        }
     }
 
     if(page == PAGE_WEATHER) {
@@ -2480,6 +2486,8 @@ View::View(AppData *appData){
     weatherTextFont         = NULL;
     weatherSmallFont        = NULL;
     rotateSeconds           = 0;
+    usePageTimes            = false;
+    pageSeconds[0] = pageSeconds[1] = pageSeconds[2] = 0;
     transitScale            = 1.5;
     transitFont             = NULL;
     transitHeadFont         = NULL;
