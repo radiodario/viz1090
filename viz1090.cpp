@@ -58,6 +58,7 @@ void showHelp(void) {
 "--screensize <width> <height>    Set frame buffer resolution (default: screen resolution)\n"
 "--screenindex <i>                Set the index of the display to use (default: 0)\n"
 "--uiscale <factor>               UI global scaling (default: 1)\n"
+"--hide-cursor                    Hide the mouse pointer (kiosk screens)\n"
 "--zoom <km>                      Initial map radius in km (default: 25)\n"
 "--transit                        Add a TfL departures page (toggle with T or Tab)\n"
 "--transit-loc <lat> <lon>        Location for departures (default: --lat/--lon)\n"
@@ -112,6 +113,8 @@ int main(int argc, char **argv) {
          } else if (!strcmp(argv[j],"--screensize") && more) {
             view.screen_width = atoi(argv[++j]);
             view.screen_height = atoi(argv[++j]);
+        } else if (!strcmp(argv[j],"--hide-cursor")) {
+            view.hideCursor = true;
         } else if (!strcmp(argv[j],"--zoom") && more) {
             view.maxDist = atof(argv[++j]);
         } else if (!strcmp(argv[j],"--transit")) {

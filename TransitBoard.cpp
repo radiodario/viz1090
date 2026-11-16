@@ -192,6 +192,10 @@ bool TransitBoard::fetchStops() {
                     if(!isTransitMode(group.value("modeName", ""))) {
                         continue;
                     }
+                    std::string modeName = group.value("modeName", "");
+                    if(modeName != "bus" && stop.railMode.empty()) {
+                        stop.railMode = modeName;
+                    }
                     for(const auto &lineId : group.at("lineIdentifier")) {
                         lines.insert(lineId.get<std::string>());
                         served = true;
@@ -312,6 +316,7 @@ bool TransitBoard::fetchArrivals() {
         m.indicator = stop.indicator;
         m.station = stop.station;
         m.heading = stop.heading;
+        m.railMode = stop.railMode;
         m.lat = stop.lat;
         m.lon = stop.lon;
         m.walkMinutes = stop.walkMinutes;

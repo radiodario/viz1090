@@ -195,6 +195,7 @@ class View {
 	    int screen_height;
 	    int screen_depth;
 	    int fullscreen;
+	    bool hideCursor;
 	    int screen_index;
 
 		SDL_Window		*window;

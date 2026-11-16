@@ -277,9 +277,15 @@ void View::SDL_init() {
         exit(1);
     }
 
-    // Hide the cursor only for kiosk-style fullscreen use; keep it in a desktop window.
-    if(fullscreen) {
+    // Crosshair pointer; --hide-cursor for kiosk screens with no mouse.
+    if(hideCursor) {
         SDL_ShowCursor(SDL_DISABLE);
+    } else {
+        SDL_Cursor *crosshair = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_CROSSHAIR);
+        if(crosshair) {
+            SDL_SetCursor(crosshair);
+        }
+        SDL_ShowCursor(SDL_ENABLE);
     }
 
     // Render at native resolution on high-DPI (Retina) displays instead of
@@ -659,13 +665,22 @@ void View::drawLines(int left, int top, int right, int bottom, int bailTime) {
     latLonFromScreenCoords(&screen_lat_max, &screen_lon_max, right, bottom);
 
     // OSM layers underneath; minor roads only when zoomed in enough to read them
+    // each layer fades out past a zoom level, so the city view stays clean
     const float MINOR_ROADS_MAX_DIST_KM = 6.0f;
-    drawLinesRecursive(&(map.water_root), screen_lat_min, screen_lat_max, screen_lon_min, screen_lon_max, style.waterColor);
+    const float MAJOR_ROADS_MAX_DIST_KM = 12.0f;
+    const float RAIL_WATER_MAX_DIST_KM = 15.0f;
+    if(maxDist < RAIL_WATER_MAX_DIST_KM) {
+        drawLinesRecursive(&(map.water_root), screen_lat_min, screen_lat_max, screen_lon_min, screen_lon_max, style.waterColor);
+    }
     if(maxDist < MINOR_ROADS_MAX_DIST_KM) {
         drawLinesRecursive(&(map.road_minor_root), screen_lat_min, screen_lat_max, screen_lon_min, screen_lon_max, style.roadMinorColor);
     }
-    drawLinesRecursive(&(map.road_major_root), screen_lat_min, screen_lat_max, screen_lon_min, screen_lon_max, style.roadMajorColor);
-    drawLinesRecursive(&(map.rail_root), screen_lat_min, screen_lat_max, screen_lon_min, screen_lon_max, style.railColor);
+    if(maxDist < MAJOR_ROADS_MAX_DIST_KM) {
+        drawLinesRecursive(&(map.road_major_root), screen_lat_min, screen_lat_max, screen_lon_min, screen_lon_max, style.roadMajorColor);
+    }
+    if(maxDist < RAIL_WATER_MAX_DIST_KM) {
+        drawLinesRecursive(&(map.rail_root), screen_lat_min, screen_lat_max, screen_lon_min, screen_lon_max, style.railColor);
+    }
 
     drawLinesRecursive(&(map.root), screen_lat_min, screen_lat_max, screen_lon_min, screen_lon_max, style.geoColor);
 
@@ -1667,9 +1682,12 @@ void View::drawTransitStops() {
     Label text;
     text.setFont(mapFont);
 
-    // nearest stops first, so they win when labels would collide
+    // stations first, then nearest stops, so they win when labels would collide
     std::vector<StopMarker> stops = transit->stopMarkers();
     std::sort(stops.begin(), stops.end(), [](const StopMarker &a, const StopMarker &b) {
+        if(a.station != b.station) {
+            return a.station;
+        }
         return a.walkMinutes < b.walkMinutes;
     });
     std::vector<SDL_Rect> placed;
@@ -1696,6 +1714,17 @@ void View::drawTransitStops() {
                              x - hx * len * 0.6f - hy * wid, y - hy * len * 0.6f + hx * wid,
                              x - hx * len * 0.6f + hy * wid, y - hy * len * 0.6f - hx * wid,
                              color.r, color.g, color.b, SDL_ALPHA_OPAQUE);
+        } else if(stop.station) {
+            // simplified TfL roundel: coloured ring with a navy bar across
+            SDL_Color ring = stop.railMode == "tube" ? SDL_Color{220, 36, 31, 255} : SDL_Color{238, 118, 35, 255};
+            SDL_Color bar = {16, 6, 159, 255};
+            int r = 3 * half;
+            int inner = r * 6 / 10;
+            filledCircleRGBA(renderer, x, y, r, ring.r, ring.g, ring.b, SDL_ALPHA_OPAQUE);
+            filledCircleRGBA(renderer, x, y, inner, 0, 0, 0, SDL_ALPHA_OPAQUE);
+            int barW = r * 13 / 10;
+            int barH = std::max(2, r * 4 / 10);
+            boxRGBA(renderer, x - barW, y - barH / 2, x + barW, y + barH / 2, bar.r, bar.g, bar.b, SDL_ALPHA_OPAQUE);
         } else {
             boxRGBA(renderer, x - half, y - half, x + half, y + half, color.r, color.g, color.b, SDL_ALPHA_OPAQUE);
         }
@@ -1717,7 +1746,7 @@ void View::drawTransitStops() {
         }
 
         // stacked like the plane labels: stop code, then the next two arrivals
-        int tx = x + half + mapFontWidth;
+        int tx = x + (stop.station ? 4 * half : half) + mapFontWidth;
         int ty = y - mapFontHeight / 2;
 
         // skip the label if it would land on one already drawn
@@ -1796,6 +1825,7 @@ View::View(AppData *appData){
     transitFont             = NULL;
     transitHeadFont         = NULL;
     miniBoard               = true;
+    hideCursor              = false;
     miniBoardFont           = NULL;
     transitClockFont        = NULL;
     transitFontWidth        = 0;
