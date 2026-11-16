@@ -40,6 +40,7 @@
 #include "SDL2/SDL_ttf.h" 
 #include <chrono>
 #include <csignal>
+#include <map>
 #include <string>
 
 extern volatile sig_atomic_t viewSnapshotRequested;
@@ -144,6 +145,8 @@ class View {
 		void drawTransit();
 		void drawTransitStops();        // stop markers on the map page
 		void drawMiniBoard();           // next few departures over the map
+		float stopArrowHeading(const StopMarker &stop);  // TfL compass point snapped to the nearest road
+		std::map<std::string, float> stopHeadingCache;
 		bool miniBoard;                 // toggled with B
 		TTF_Font *miniBoardFont;
 

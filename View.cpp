@@ -1585,6 +1585,68 @@ void View::drawMiniBoard() {
     }
 }
 
+// TfL only gives a stop's direction as one of 8 compass points. Snap it to the
+// bearing of the nearest OSM road, picking whichever way along the road is
+// closest to TfL's heading. Cached per stop once the map has loaded.
+float View::stopArrowHeading(const StopMarker &stop) {
+    if(stop.heading < 0 || map.loaded < 100) {
+        return stop.heading;
+    }
+
+    char key[64];
+    snprintf(key, sizeof(key), "%.6f,%.6f", stop.lat, stop.lon);
+    auto cached = stopHeadingCache.find(key);
+    if(cached != stopHeadingCache.end()) {
+        return cached->second;
+    }
+
+    const float SEARCH_M = 40.0f;
+    const float M_PER_DEG = 111195.0f;
+    float cosLat = cos(stop.lat * M_PI / 180.0f);
+    float dLat = SEARCH_M / M_PER_DEG;
+    float dLon = SEARCH_M / (M_PER_DEG * cosLat);
+
+    std::vector<Line*> lines = map.getLinesRecursive(&map.road_major_root, stop.lat - dLat, stop.lat + dLat, stop.lon - dLon, stop.lon + dLon);
+    std::vector<Line*> minor = map.getLinesRecursive(&map.road_minor_root, stop.lat - dLat, stop.lat + dLat, stop.lon - dLon, stop.lon + dLon);
+    lines.insert(lines.end(), minor.begin(), minor.end());
+
+    float best = SEARCH_M;
+    float roadBearing = 0;
+    bool foundRoad = false;
+    for(Line *line : lines) {
+        // local metres, stop at the origin
+        float ax = (line->start.lon - stop.lon) * cosLat * M_PER_DEG;
+        float ay = (line->start.lat - stop.lat) * M_PER_DEG;
+        float bx = (line->end.lon - stop.lon) * cosLat * M_PER_DEG;
+        float by = (line->end.lat - stop.lat) * M_PER_DEG;
+        float vx = bx - ax, vy = by - ay;
+        float len2 = vx * vx + vy * vy;
+        if(len2 < 1.0f) {
+            continue;
+        }
+        float t = std::max(0.0f, std::min(1.0f, -(ax * vx + ay * vy) / len2));
+        float px = ax + t * vx, py = ay + t * vy;
+        float dist = sqrtf(px * px + py * py);
+        if(dist < best) {
+            best = dist;
+            roadBearing = atan2f(vx, vy) * 180.0f / M_PI;  // degrees from north
+            foundRoad = true;
+        }
+    }
+
+    float heading = stop.heading;
+    if(foundRoad) {
+        // the road runs both ways: take the direction nearest TfL's compass point
+        float a = fmodf(roadBearing + 360.0f, 360.0f);
+        float b = fmodf(a + 180.0f, 360.0f);
+        auto diff = [](float x, float y) { float d = fabsf(x - y); return d > 180.0f ? 360.0f - d : d; };
+        heading = diff(a, stop.heading) <= diff(b, stop.heading) ? a : b;
+    }
+
+    stopHeadingCache[key] = heading;
+    return heading;
+}
+
 // Bus stops and stations on the map. Labels with the next arrivals appear
 // once zoomed in far enough for them not to pile up.
 void View::drawTransitStops() {
@@ -1622,10 +1684,11 @@ void View::drawTransitStops() {
         }
 
         SDL_Color color = stop.station ? SDL_Color{250, 123, 5, 255} : SDL_Color{220, 36, 31, 255};
-        if(stop.heading >= 0 && !stop.station) {
-            // arrow pointing the way buses leave the stop
-            float hx = sin(stop.heading * M_PI / 180.0f);
-            float hy = -cos(stop.heading * M_PI / 180.0f);
+        float heading = stopArrowHeading(stop);
+        if(heading >= 0 && !stop.station) {
+            // arrow pointing the way buses leave the stop, along its road
+            float hx = sin(heading * M_PI / 180.0f);
+            float hy = -cos(heading * M_PI / 180.0f);
             float len = 2.5f * half;
             float wid = 1.5f * half;
             filledTrigonRGBA(renderer,
