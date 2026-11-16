@@ -60,7 +60,7 @@ void showHelp(void) {
 "--uiscale <factor>               UI global scaling (default: 1)\n"
 "--hide-cursor                    Hide the mouse pointer (kiosk screens)\n"
 "--zoom <km>                      Initial map radius in km (default: 25)\n"
-"--weather                        Add a local weather page (Open-Meteo; W to show)\n"
+"--weather                        Add a local weather page (Open-Meteo; W to show) and rain radar on the map (R)\n"
 "--weather-start                  Start on the weather page\n"
 "--transit                        Add a TfL departures page (toggle with T or Tab)\n"
 "--transit-loc <lat> <lon>        Location for departures (default: --lat/--lon)\n"
@@ -84,6 +84,7 @@ int main(int argc, char **argv) {
 
     TransitBoard transit;
     WeatherData weatherData;
+    RadarData radarData;
     bool weatherEnabled = false;
     bool weatherStart = false;
     bool transitEnabled = false;
@@ -168,6 +169,8 @@ int main(int argc, char **argv) {
         }
         weatherData.start(appData.modes.fUserLat, appData.modes.fUserLon);
         view.weather = &weatherData;
+        radarData.start(appData.modes.fUserLat, appData.modes.fUserLon);
+        view.radar = &radarData;
         if(weatherStart) {
             view.showPage(View::PAGE_WEATHER);
         }

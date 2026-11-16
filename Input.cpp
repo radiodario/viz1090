@@ -73,6 +73,13 @@ void Input::getInput()
 						}
 					break;
 
+					case SDLK_r:
+						// rain radar on the map
+						if((event.key.keysym.mod & (KMOD_GUI | KMOD_ALT | KMOD_CTRL)) == 0 && !event.key.repeat) {
+							view->showRadar = !view->showRadar;
+						}
+					break;
+
 					case SDLK_b:
 						// mini departures board on the map
 						if((event.key.keysym.mod & (KMOD_GUI | KMOD_ALT | KMOD_CTRL)) == 0 && !event.key.repeat) {

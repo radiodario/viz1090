@@ -37,6 +37,7 @@
 #include "Style.h"
 #include "TransitBoard.h"
 #include "WeatherData.h"
+#include "RadarData.h"
 #include "SDL2/SDL.h"
 #include "SDL2/SDL_ttf.h" 
 #include <chrono>
@@ -133,6 +134,16 @@ class View {
 		Page page;
 		TransitBoard *transit;          // NULL unless --transit is given
 		WeatherData *weather;           // NULL unless --weather is given
+		RadarData *radar;               // rain radar over the map (with --weather)
+		bool showRadar;                 // toggled with R
+		int radarVersion;
+		time_t radarTime;
+		struct RadarTexture {
+			SDL_Texture *texture;
+			double latTop, latBottom, lonLeft, lonRight;
+		};
+		std::vector<RadarTexture> radarTextures;
+		void drawRadar();
 		void drawWeather();
 		void drawWeatherGlyph(int code, bool isDay, int cx, int cy, int px);
 		TTF_Font *weatherBigFont;

@@ -29,9 +29,9 @@ sudo apt-get install build-essential
 
 1. Install SDL and RTL-SDR libraries
 ```
-sudo apt-get install libsdl2-dev libsdl2-ttf-dev libsdl2-gfx-dev librtlsdr-dev libcurl4-openssl-dev nlohmann-json3-dev
+sudo apt-get install libsdl2-dev libsdl2-ttf-dev libsdl2-gfx-dev librtlsdr-dev libcurl4-openssl-dev nlohmann-json3-dev libsdl2-image-dev
 ```
-(libcurl and nlohmann-json are for the TfL departures page. On macOS: `brew install sdl2 sdl2_ttf sdl2_gfx nlohmann-json` and build with `make CXX=clang++ CXXFLAGS="-O2 -std=c++11 -I/opt/homebrew/include" CFLAGS="-O2 -I/opt/homebrew/include" LDFLAGS=-L/opt/homebrew/lib`.)
+(libcurl and nlohmann-json are for the TfL departures page. On macOS: `brew install sdl2 sdl2_ttf sdl2_gfx sdl2_image nlohmann-json` and build with `make CXX=clang++ CXXFLAGS="-O2 -std=c++11 -I/opt/homebrew/include" CFLAGS="-O2 -I/opt/homebrew/include" LDFLAGS=-L/opt/homebrew/lib`.)
 1b. (Raspberry Pi only)
 If you are running viz1090 on the Raspbian desktop (or any form of X) you can skip this step, but if you want to be able to start it directly from the command line, do the following to build SDL with KMS driver support. This is taken from [this stackoverflow question](https://stackoverflow.com/questions/57672568/sdl2-on-raspberry-pi-without-x)
 
@@ -135,7 +135,7 @@ viz1090 will open an SDL window set to the resolution of your screen.
 | --fullscreen					| Render fullscreen rather than in a window | 
 | --screenindex [i]				| Display to open on (0 = main) | 
 | --zoom [km]					| Initial map radius in km (default 25) | 
-| --weather						| Add a local weather page from Open-Meteo; press W (or T to cycle pages) | 
+| --weather						| Add a local weather page from Open-Meteo (W, or T to cycle pages) and rain radar from RainViewer on the map (R to toggle) | 
 | --weather-start				| Start on the weather page | 
 | --hide-cursor					| Hide the crosshair pointer (for screens without a mouse) | 
 | --transit						| Add a TfL departures page; press T to switch pages, B for the mini board on the map | 

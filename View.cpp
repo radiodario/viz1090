@@ -31,6 +31,7 @@
 
 #include "SDL2/SDL2_rotozoom.h"
 #include "SDL2/SDL2_gfxPrimitives.h"
+#include "SDL2/SDL_image.h"
 
 #include "View.h"
 
@@ -285,6 +286,8 @@ void View::SDL_init() {
         exit(1);
     }
     
+    IMG_Init(IMG_INIT_PNG);
+
     if (TTF_Init() < 0) {
         printf("Couldn't initialize SDL TTF: %s\n", SDL_GetError());
         exit(1);
@@ -1335,6 +1338,7 @@ void View::draw() {
     zoomMapToTarget();
 
     drawGeography();
+    drawRadar();
     drawScaleBars();
     frameBuses.clear();
     if(transit && maxDist <= 8.0f) {
@@ -1783,6 +1787,81 @@ float View::stopArrowHeading(const StopMarker &stop) {
 
     stopHeadingCache[key] = heading;
     return heading;
+}
+
+// Rain radar tiles under the aircraft, as chunky semi-transparent pixels.
+void View::drawRadar() {
+    if(!radar || !showRadar) {
+        return;
+    }
+
+    // new tiles: decode and upload on the render thread
+    if(radar->version() != radarVersion) {
+        for(RadarTexture &t : radarTextures) {
+            SDL_DestroyTexture(t.texture);
+        }
+        radarTextures.clear();
+
+        RadarFrame frame = radar->frame();
+        for(const RadarTile &tile : frame.tiles) {
+            SDL_RWops *rw = SDL_RWFromConstMem(tile.png.data(), (int)tile.png.size());
+            SDL_Surface *surface = rw ? IMG_Load_RW(rw, 1) : NULL;
+            if(!surface) {
+                continue;
+            }
+            SDL_Texture *texture = SDL_CreateTextureFromSurface(renderer, surface);
+            SDL_FreeSurface(surface);
+            if(!texture) {
+                continue;
+            }
+            SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+            SDL_SetTextureScaleMode(texture, SDL_ScaleModeNearest);
+            RadarTexture rt = {texture, tile.latTop, tile.latBottom, tile.lonLeft, tile.lonRight};
+            radarTextures.push_back(rt);
+        }
+        radarVersion = frame.version;
+        radarTime = frame.time;
+    }
+
+    if(radarTextures.empty()) {
+        return;
+    }
+
+    // lighter when zoomed in, where each radar pixel is a big block over the streets
+    Uint8 alpha = maxDist < 3.0f ? 70 : 120;
+
+    // pxFromLonLat treats exactly 0 as "no position": nudge the meridian
+    auto nz = [](double v) { return v == 0.0 ? 1e-7 : v; };
+
+    for(const RadarTexture &t : radarTextures) {
+        float dx, dy;
+        int x1, y1, x2, y2;
+        pxFromLonLat(&dx, &dy, nz(t.lonLeft), nz(t.latTop));
+        screenCoords(&x1, &y1, dx, dy);
+        pxFromLonLat(&dx, &dy, nz(t.lonRight), nz(t.latBottom));
+        screenCoords(&x2, &y2, dx, dy);
+        if(x2 < 0 || y2 < 0 || x1 > screen_width || y1 > screen_height) {
+            continue;
+        }
+        // one pixel of overlap hides seams from rounding between tiles
+        SDL_Rect dest = {x1, y1, x2 - x1 + 1, y2 - y1 + 1};
+        SDL_SetTextureAlphaMod(t.texture, alpha);
+        SDL_RenderCopy(renderer, t.texture, NULL, &dest);
+    }
+
+    // credit, as RainViewer asks
+    char when[16];
+    strftime(when, sizeof(when), "%H:%M", localtime(&radarTime));
+    std::string credit = std::string("Radar: RainViewer ") + when;
+    TTF_Font *font = stopNameFont ? stopNameFont : mapFont;
+    int w = 0, h = 0;
+    TTF_SizeUTF8(font, credit.c_str(), &w, &h);
+    Label text;
+    text.setFont(font);
+    text.setColor(style.grey);
+    text.setPosition(screen_width - w - PAD * pixel_ratio, PAD * pixel_ratio);
+    text.setText(credit);
+    text.draw(renderer);
 }
 
 // Ease buses towards their latest estimate, fade the selection in and out,
@@ -2272,6 +2351,10 @@ View::View(AppData *appData){
     page                    = PAGE_MAP;
     transit                 = NULL;
     weather                 = NULL;
+    radar                   = NULL;
+    showRadar               = true;
+    radarVersion            = -1;
+    radarTime               = 0;
     weatherBigFont          = NULL;
     weatherHeadFont         = NULL;
     weatherTabFont          = NULL;
