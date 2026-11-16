@@ -151,6 +151,9 @@ class View {
 		void drawRadarLegend(int right, int top, int height);
 		void drawWeatherRegional(const WeatherSnapshot &w, int top, int bottom, float anim);
 		void drawTicker(const std::string &text, int y, float anim);
+		void drawBackdrop(int slot, SDL_Color color);  // cached base map for regional (0) / radar (1)
+		SDL_Texture *backdropTexture[2];
+		int backdropLoaded[2];
 		SDL_Texture *tickerTexture;
 		std::string tickerText;
 		int tickerW, tickerH;

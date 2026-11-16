@@ -1906,13 +1906,28 @@ void View::drawRadarTiles(Uint8 alpha, bool animate, time_t *frameTime) {
             int wx = ((tx % n) + n) % n;
             radar->want(z, wx, ty);
 
+            // this frame's tile, or while the loop is still downloading,
+            // the nearest frame that has it, so the radar is never blank
             std::string k = RadarData::key(frame.path, z, wx, ty);
             auto it = radarTextures.find(k);
-            if(it == radarTextures.end()) {
-                std::vector<unsigned char> png;
-                if(!radar->tile(frame.path, z, wx, ty, &png)) {
-                    continue;  // still downloading
+            std::vector<unsigned char> png;
+            if(it == radarTextures.end() && !radar->tile(frame.path, z, wx, ty, &png)) {
+                bool found = false;
+                for(int f = (int)frames.size() - 1; f >= 0 && !found; f--) {
+                    std::string fk = RadarData::key(frames[f].path, z, wx, ty);
+                    it = radarTextures.find(fk);
+                    if(it != radarTextures.end()) {
+                        found = true;
+                    } else if(radar->tile(frames[f].path, z, wx, ty, &png)) {
+                        k = fk;
+                        found = true;
+                    }
                 }
+                if(!found) {
+                    continue;  // nothing downloaded for this tile yet
+                }
+            }
+            if(it == radarTextures.end()) {
                 SDL_RWops *rw = SDL_RWFromConstMem(png.data(), (int)png.size());
                 SDL_Surface *surface = rw ? IMG_Load_RW(rw, 1) : NULL;
                 if(!surface) {
@@ -2477,6 +2492,8 @@ View::View(AppData *appData){
     weatherBodyFont         = NULL;
     weatherTitleFont        = NULL;
     tickerTexture           = NULL;
+    backdropTexture[0] = backdropTexture[1] = NULL;
+    backdropLoaded[0] = backdropLoaded[1] = -1;
     tickerW                 = 0;
     tickerH                 = 0;
     weatherSegment          = 0;

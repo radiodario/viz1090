@@ -968,8 +968,8 @@ void View::drawWeather() {
             putCentred(renderer, weatherHeadFont, moonPhaseName(p), cx, ty, WHITE);
             ty += fontHeight(weatherHeadFont);
             int lit = (int)lround((1.0 - cos(2.0 * M_PI * p)) / 2.0 * 100.0);
-            putCentred(renderer, weatherHeadFont, std::to_string(lit) + "% lit", cx, ty, GREY);
-            ty += fontHeight(weatherHeadFont) + m;
+            putCentred(renderer, weatherBodyFont, std::to_string(lit) + "% lit", cx, ty, GREY);  // Heavy has no '%'
+            ty += fontHeight(weatherBodyFont) + m;
             char nextFull[32], nextNew[32];
             time_t full = nextPhase(nowWall, 0.5), nw = nextPhase(nowWall, 0.0);
             strftime(nextFull, sizeof(nextFull), "Full %a %d %b", localtime(&full));
@@ -1033,6 +1033,32 @@ void View::drawTicker(const std::string &text, int y, float anim) {
     }
 }
 
+// Base map for the regional and radar segments, drawn once into a texture
+// (it's ~a million points, too many to redraw every frame on a Pi) and
+// redrawn only when the map data finishes loading. Uses the projection
+// currently set on the view.
+void View::drawBackdrop(int slot, SDL_Color color) {
+    if(!backdropTexture[slot] || backdropLoaded[slot] != map.loaded) {
+        if(!backdropTexture[slot]) {
+            backdropTexture[slot] = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_TARGET, screen_width, screen_height);
+            if(!backdropTexture[slot]) {
+                return;
+            }
+        }
+        SDL_SetRenderTarget(renderer, backdropTexture[slot]);
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+        SDL_RenderClear(renderer);
+        float screen_lat_min, screen_lat_max, screen_lon_min, screen_lon_max;
+        latLonFromScreenCoords(&screen_lat_min, &screen_lon_min, 0, 0);
+        latLonFromScreenCoords(&screen_lat_max, &screen_lon_max, screen_width, screen_height);
+        drawLinesRecursive(&(map.root), std::min(screen_lat_min, screen_lat_max), std::max(screen_lat_min, screen_lat_max),
+                           screen_lon_min, screen_lon_max, color);
+        SDL_SetRenderTarget(renderer, NULL);
+        backdropLoaded[slot] = map.loaded;
+    }
+    SDL_RenderCopy(renderer, backdropTexture[slot], NULL, NULL);
+}
+
 // Regional map: nearby cities with their temperature and conditions.
 void View::drawWeatherRegional(const WeatherSnapshot &w, int top, int bottom, float anim) {
     float savedDist = maxDist, savedLat = centerLat, savedLon = centerLon;
@@ -1040,11 +1066,7 @@ void View::drawWeatherRegional(const WeatherSnapshot &w, int top, int bottom, fl
     centerLat = appData->modes.fUserLat;
     centerLon = appData->modes.fUserLon;
 
-    float screen_lat_min, screen_lat_max, screen_lon_min, screen_lon_max;
-    latLonFromScreenCoords(&screen_lat_min, &screen_lon_min, 0, 0);
-    latLonFromScreenCoords(&screen_lat_max, &screen_lon_max, screen_width, screen_height);
-    drawLinesRecursive(&(map.root), std::min(screen_lat_min, screen_lat_max), std::max(screen_lat_min, screen_lat_max),
-                       screen_lon_min, screen_lon_max, SDL_Color{70, 70, 84, 255});
+    drawBackdrop(0, SDL_Color{70, 70, 84, 255});
 
     std::vector<SDL_Rect> placed;
     int glyphPx = std::max(1, screen_height / 170);
@@ -1110,11 +1132,7 @@ void View::drawWeatherRadar(int top, int bottom) {
     centerLat = appData->modes.fUserLat;
     centerLon = appData->modes.fUserLon;
 
-    float screen_lat_min, screen_lat_max, screen_lon_min, screen_lon_max;
-    latLonFromScreenCoords(&screen_lat_min, &screen_lon_min, 0, 0);
-    latLonFromScreenCoords(&screen_lat_max, &screen_lon_max, screen_width, screen_height);
-    drawLinesRecursive(&(map.root), std::min(screen_lat_min, screen_lat_max), std::max(screen_lat_min, screen_lat_max),
-                       screen_lon_min, screen_lon_max, SDL_Color{60, 60, 70, 255});
+    drawBackdrop(1, SDL_Color{60, 60, 70, 255});
 
     time_t frameTime = 0;
     drawRadarTiles(200, true, &frameTime);
