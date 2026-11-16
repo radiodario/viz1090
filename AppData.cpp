@@ -70,6 +70,8 @@ void AppData::connect() {
     c = (struct client *) malloc(sizeof(*c));
 
     if ((fd = setupConnection(c)) == ANET_ERR) {
+        free(c);  // retried every frame while there's no decoder: don't leak
+        c = NULL;
         fprintf(stderr, "Waiting on %s:%d\n", server, modes.net_input_beast_port);     
         return;
     } 

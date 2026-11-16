@@ -371,16 +371,22 @@ static std::string clockString(time_t t) {
     return s;
 }
 
-// draw text, return its width
+// draw text with a small drop shadow (broadcast style, and easier to read
+// over the radar); return its width
 static int putText(SDL_Renderer *r, TTF_Font *font, const std::string &s, int x, int y, SDL_Color color) {
     if(!font || s.empty()) {
         return 0;
     }
+    int off = std::max(1, TTF_FontHeight(font) / 14);
     Label label;
     label.setFont(font);
+    label.setColor({0, 0, 0, 255});
+    label.setPosition(x + off, y + off);
+    label.setText(s);
+    label.draw(r);
     label.setColor(color);
     label.setPosition(x, y);
-    label.setText(s);
+    label.setText(s);  // the colour only applies when the text is rendered
     label.draw(r);
     int w = 0, h = 0;
     TTF_SizeUTF8(font, s.c_str(), &w, &h);
@@ -430,7 +436,7 @@ static void putTempCentred(SDL_Renderer *r, TTF_Font *font, float t, int cx, int
 //
 
 enum WeatherSegment { SEG_NOW, SEG_NEXT_HOUR, SEG_12H, SEG_48H, SEG_WEEK, SEG_SUN_MOON, SEG_RADAR, SEG_COUNT };
-static const char *SEGMENT_NAMES[SEG_COUNT] = {"Now", "Next hour", "12 hours", "48 hours", "Week", "Sun, Moon", "Radar"};
+static const char *SEGMENT_NAMES[SEG_COUNT] = {"Current Conditions", "Next Hour", "Next 12 Hours", "48 Hours", "Extended Forecast", "Sun and Moon", "Radar"};
 static const int SEGMENT_SECONDS[SEG_COUNT] = {12, 10, 10, 10, 10, 10, 16};
 
 void View::nextWeatherSegment(int dir) {
@@ -464,31 +470,52 @@ void View::drawWeather() {
     WeatherSnapshot w = weather->snapshot();
     time_t nowWall = time(NULL);
 
-    // header sizes, needed first so the radar can fill the space under it
+    // header: clock, then this segment's title; date on the right
     TTF_Font *clockFont = transitClockFont ? transitClockFont : weatherHeadFont;
-    int headH = std::max(fontHeight(weatherHeadFont), fontHeight(clockFont));
-    int stripY = m + headH + m / 2;
-    int stripH = fontHeight(weatherTabFont);
+    TTF_Font *titleFont = weatherHeadFont;
+    int headH = std::max(fontHeight(titleFont), fontHeight(clockFont));
+    int tickerH = fontHeight(weatherBodyFont) + m;
     int progressH = std::max(2, H / 300);
-    Area area = {m, stripY + stripH + m, W - 2 * m, H - (stripY + stripH + m) - m - progressH};
+    Area area = {m, m + headH + m, W - 2 * m, H - (m + headH + m) - m - tickerH - progressH};
 
     if(weatherSegment == SEG_RADAR) {
-        drawWeatherRadar(area.y);
+        drawWeatherRadar(area.y, area.y + area.h + m);
     }
 
-    // heading like the departures board: clock, then "Weather" in orange, then the date
     int hx = m;
-    hx += putText(renderer, clockFont, clockString(nowWall), hx, m, WHITE) + m;
-    hx += putText(renderer, weatherHeadFont, "Weather", hx, m, ORANGE) + m;
-    char date[32];
-    strftime(date, sizeof(date), "%A %d %B", localtime(&nowWall));
-    putText(renderer, weatherTextFont, date, hx, m + headH - fontHeight(weatherTextFont), GREY);
+    hx += putText(renderer, clockFont, clockString(nowWall), hx, m, WHITE) + 2 * m;
+    putText(renderer, titleFont, SEGMENT_NAMES[weatherSegment], hx, m + headH - fontHeight(titleFont), WHITE);
+    if(weatherSegment == SEG_RADAR) {
+        drawRadarLegend(W - m, m, headH);
+    } else {
+        char date[32];
+        strftime(date, sizeof(date), "%a %d %b", localtime(&nowWall));
+        putText(renderer, weatherBodyFont, date, W - m - textWidth(weatherBodyFont, date), m + headH - fontHeight(weatherBodyFont), GREY);
+    }
+    lineRGBA(renderer, 0, m + headH + m / 2, W, m + headH + m / 2, PANEL_EDGE.r, PANEL_EDGE.g, PANEL_EDGE.b, 255);
 
-    // segment strip: the current one bright
-    int sx = m;
-    for(int i = 0; i < SEG_COUNT; i++) {
-        SDL_Color c = i == weatherSegment ? WHITE : GREY;
-        sx += putText(renderer, weatherTabFont, SEGMENT_NAMES[i], sx, stripY, c) + 2 * m;
+    // ticker along the bottom: short lines about now, a few seconds each
+    int tickerY = H - progressH - tickerH;
+    boxRGBA(renderer, 0, tickerY, W, H, 12, 12, 14, 255);
+    lineRGBA(renderer, 0, tickerY, W, tickerY, PANEL_EDGE.r, PANEL_EDGE.g, PANEL_EDGE.b, 255);
+    if(w.valid) {
+        std::vector<std::string> lines;
+        lines.push_back(weatherDescription(w.code));
+        lines.push_back("Wind " + compass(w.windDir) + " " + std::to_string((int)lroundf(w.windMph)) + " mph");
+        lines.push_back("Humidity " + std::to_string(w.humidity) + "%");
+        if(!w.days.empty()) {
+            lines.push_back("Sunrise " + clockString(w.days[0].sunrise) + "  Sunset " + clockString(w.days[0].sunset));
+            if(w.days[0].precipProb >= 0) {
+                lines.push_back("Chance of rain today " + std::to_string(w.days[0].precipProb) + "%");
+            }
+        }
+        if(weatherSegment == SEG_RADAR) {
+            lines.assign(1, "Radar: RainViewer, last two hours");
+        }
+        long secs = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
+        std::string line = lines[(secs / 4) % lines.size()];
+        std::transform(line.begin(), line.end(), line.begin(), ::toupper);
+        putText(renderer, weatherBodyFont, line, m, tickerY + m / 2, WHITE);
     }
 
     // progress through this segment
@@ -502,34 +529,52 @@ void View::drawWeather() {
 
     switch(weatherSegment) {
     case SEG_NOW: {
-        int glyphPx = std::max(2, std::min(area.h / 24, area.w / 2 / 20));
-        int gx = area.x + area.w / 4;
-        int gy = area.y + area.h / 2;
-        drawWeatherGlyph(w.code, w.isDay, gx, gy, glyphPx, anim);
+        // left: temperature, conditions, glyph, wind
+        int leftW = area.w * 9 / 20;
+        int lcx = area.x + leftW / 2;
+        int y = area.y;
+        putTempCentred(renderer, weatherBigFont, w.temp, lcx, y, WHITE);
+        y += fontHeight(weatherBigFont);
+        putCentred(renderer, weatherHeadFont, weatherDescription(w.code), lcx, y, ORANGE);
+        y += fontHeight(weatherHeadFont);
+        int windY = area.y + area.h - fontHeight(weatherBodyFont);
+        int glyphSpace = windY - y - m;
+        int glyphPx = std::max(2, std::min(glyphSpace / 20, leftW / 20));
+        drawWeatherGlyph(w.code, w.isDay, lcx, y + glyphSpace / 2, glyphPx, anim);
+        putCentred(renderer, weatherBodyFont, "Wind " + compass(w.windDir) + " " + std::to_string((int)lroundf(w.windMph)) + " mph", lcx, windY, WHITE);
 
-        int tx = area.x + area.w / 2;
-        int nowBlock = fontHeight(weatherHugeFont) + fontHeight(weatherHeadFont) + m + 4 * fontHeight(weatherBodyFont);
-        int ty = area.y + std::max(0, (area.h - nowBlock) / 2);
-        putTemp(renderer, weatherHugeFont, w.temp, tx, ty, WHITE);
-        ty += fontHeight(weatherHugeFont);
-        putText(renderer, weatherHeadFont, weatherDescription(w.code), tx, ty, ORANGE);
-        ty += fontHeight(weatherHeadFont) + m;
-        int x2 = tx + putText(renderer, weatherBodyFont, "Feels like ", tx, ty, GREY);
-        putTemp(renderer, weatherBodyFont, w.feelsLike, x2, ty, WHITE);
-        ty += fontHeight(weatherBodyFont);
-        putText(renderer, weatherBodyFont, "Wind " + compass(w.windDir) + " " + std::to_string((int)lroundf(w.windMph)) + " mph", tx, ty, WHITE);
-        ty += fontHeight(weatherBodyFont);
-        putText(renderer, weatherBodyFont, "Humidity " + std::to_string(w.humidity) + "%", tx, ty, WHITE);
-        ty += fontHeight(weatherBodyFont);
-        if(!w.days.empty()) {
-            const WeatherDay &today = w.days[0];
-            x2 = tx + putText(renderer, weatherBodyFont, "Today ", tx, ty, GREY);
-            x2 += putTemp(renderer, weatherBodyFont, today.tempMax, x2, ty, WHITE);
-            x2 += putText(renderer, weatherBodyFont, " / ", x2, ty, GREY);
-            x2 += putTemp(renderer, weatherBodyFont, today.tempMin, x2, ty, GREY);
-            if(today.precipProb >= 0) {
-                putText(renderer, weatherBodyFont, "  rain " + std::to_string(today.precipProb) + "%", x2, ty, TEAL);
+        // right: labelled readings, values right-aligned
+        int rx = area.x + leftW + 2 * m;
+        int rRight = area.x + area.w;
+        struct Row { std::string label; std::string value; bool temp; float t; };
+        char pressure[16], visibility[16];
+        snprintf(pressure, sizeof(pressure), "%d hPa", (int)lroundf(w.pressure));
+        if(w.visibility >= 10000) {
+            snprintf(visibility, sizeof(visibility), "%d km", (int)(w.visibility / 1000));
+        } else {
+            snprintf(visibility, sizeof(visibility), "%.1f km", w.visibility / 1000.0f);
+        }
+        std::vector<Row> rows = {
+            {"Humidity", std::to_string(w.humidity) + "%", false, 0},
+            {"Feels like", "", true, w.feelsLike},
+            {"Dew point", "", true, w.dewPoint},
+            {"Pressure", pressure, false, 0},
+            {"Visibility", visibility, false, 0},
+            {"Cloud", std::to_string(w.cloudCover) + "%", false, 0},
+        };
+        if(!w.days.empty() && w.days[0].precipProb >= 0) {
+            rows.push_back({"Rain today", std::to_string(w.days[0].precipProb) + "%", false, 0});
+        }
+        int rowH = std::min(fontHeight(weatherHeadFont) * 3 / 2, area.h / (int)rows.size());
+        int ry = area.y + std::max(0, (area.h - rowH * (int)rows.size()) / 2);
+        for(const Row &row : rows) {
+            putText(renderer, weatherBodyFont, row.label, rx, ry, GREY);
+            if(row.temp) {
+                putTemp(renderer, weatherBodyFont, row.t, rRight - tempWidth(weatherBodyFont, row.t), ry, WHITE);
+            } else {
+                putText(renderer, weatherBodyFont, row.value, rRight - textWidth(weatherBodyFont, row.value), ry, WHITE);
             }
+            ry += rowH;
         }
         break;
     }
@@ -746,7 +791,25 @@ void View::drawWeather() {
 
 // Radar segment: the region around home with the last two hours of radar
 // looping over a plain base map, and a timeline of the frames.
-void View::drawWeatherRadar(int top) {
+// Light-to-heavy colour key for RainViewer's "universal blue" scheme.
+void View::drawRadarLegend(int right, int top, int height) {
+    const SDL_Color keys[] = {{136, 221, 238, 255}, {0, 153, 204, 255}, {0, 102, 170, 255},
+                              {255, 238, 0, 255}, {255, 170, 0, 255}, {255, 68, 0, 255}, {193, 0, 0, 255}};
+    int n = sizeof(keys) / sizeof(keys[0]);
+    int box = std::max(4, height / 2);
+    int heavyW = textWidth(weatherBodyFont, "Heavy");
+    int x = right - heavyW;
+    int y = top + (height - box) / 2;
+    putText(renderer, weatherBodyFont, "Heavy", x, top + (height - fontHeight(weatherBodyFont)) / 2, WHITE);
+    x -= n * box + box / 2;
+    for(int i = 0; i < n; i++) {
+        boxRGBA(renderer, x + i * box, y, x + (i + 1) * box - 1, y + box, keys[i].r, keys[i].g, keys[i].b, 255);
+    }
+    int lightW = textWidth(weatherBodyFont, "Light");
+    putText(renderer, weatherBodyFont, "Light", x - lightW - box / 2, top + (height - fontHeight(weatherBodyFont)) / 2, WHITE);
+}
+
+void View::drawWeatherRadar(int top, int bottom) {
     if(!radar) {
         return;
     }
@@ -791,9 +854,9 @@ void View::drawWeatherRadar(int top) {
         return;
     }
     int m = std::max(4, screen_height / 50);
-    int barY = screen_height - m - fontHeight(weatherTextFont) - m;
+    int barY = bottom - m - fontHeight(weatherBodyFont) - m;
     int x0 = m, x1 = screen_width - m;
-    boxRGBA(renderer, 0, barY - m, screen_width, screen_height, 0, 0, 0, 200);
+    boxRGBA(renderer, 0, barY - m, screen_width, bottom, 0, 0, 0, 200);
     int current = radarLoopFrame((int)frames.size());
     for(int i = 0; i < (int)frames.size(); i++) {
         int x = x0 + (x1 - x0) * i / std::max(1, (int)frames.size() - 1);
@@ -803,7 +866,6 @@ void View::drawWeatherRadar(int top) {
     }
     int cxCur = x0 + (x1 - x0) * current / std::max(1, (int)frames.size() - 1);
     std::string label = clockString(frames[current].time);
-    int lw = textWidth(weatherTextFont, label);
-    putText(renderer, weatherTextFont, label, std::max(x0, std::min(x1 - lw, cxCur - lw / 2)), barY + m / 2, WHITE);
-    putText(renderer, weatherSmallFont, "Radar: RainViewer", x1 - textWidth(weatherSmallFont, "Radar: RainViewer"), barY - m - fontHeight(weatherSmallFont), GREY);
+    int lw = textWidth(weatherBodyFont, label);
+    putText(renderer, weatherBodyFont, label, std::max(x0, std::min(x1 - lw, cxCur - lw / 2)), barY + m / 2, WHITE);
 }

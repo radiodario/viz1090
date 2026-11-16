@@ -1548,13 +1548,6 @@ void View::drawTransit() {
     drawIn(transitClockFont, clock, style.white);
     drawIn(transitHeadFont, "Departures", style.orange);
 
-    int statusH = 0, statusW = 0;
-    TTF_SizeUTF8(font, "M", &statusW, &statusH);
-    text.setColor(style.grey);
-    text.setPosition(x, top + headH - statusH);
-    text.setText(dm(fitText(std::to_string(transit->radiusMeters) + "m walk  tfl " + transit->status(), (screen_width - x) / charW)));
-    text.draw(renderer);
-
     top += headH + 2 * pad;
 
     // columns, in characters: # LINE stop-code TO FROM WALK MINS (the stop code has no heading)

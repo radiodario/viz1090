@@ -38,6 +38,10 @@ struct WeatherSnapshot {
     float windMph = 0;
     int windDir = 0;      // degrees, where the wind comes from
     int humidity = 0;
+    float dewPoint = 0;   // C
+    float pressure = 0;   // hPa, sea level
+    float visibility = 0; // m
+    int cloudCover = 0;   // %
     int code = 0;
     bool isDay = true;
     std::vector<WeatherSlot> quarterHours;  // next hour, 15-minute steps

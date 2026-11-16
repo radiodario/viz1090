@@ -146,7 +146,8 @@ class View {
 		void drawRadar();               // map overlay
 		void drawWeather();
 		void drawWeatherGlyph(int code, bool isDay, int cx, int cy, int px, float anim = -1);
-		void drawWeatherRadar(int top);  // radar segment of the weather page
+		void drawWeatherRadar(int top, int bottom);  // radar segment of the weather page
+		void drawRadarLegend(int right, int top, int height);
 		int weatherSegment;              // which rotating segment is showing
 		std::chrono::steady_clock::time_point weatherSegmentShown;
 		void nextWeatherSegment(int dir);

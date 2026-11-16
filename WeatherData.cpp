@@ -99,7 +99,7 @@ bool WeatherData::fetch() {
     char url[1024];
     snprintf(url, sizeof(url),
              "https://api.open-meteo.com/v1/forecast?latitude=%.2f&longitude=%.2f"
-             "&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m,wind_direction_10m,relative_humidity_2m,is_day"
+             "&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m,wind_direction_10m,relative_humidity_2m,is_day,dew_point_2m,pressure_msl,visibility,cloud_cover"
              "&minutely_15=precipitation,weather_code,temperature_2m,is_day&forecast_minutely_15=4"
              "&hourly=temperature_2m,precipitation_probability,precipitation,weather_code,is_day&forecast_hours=48"
              "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunrise,sunset&forecast_days=7"
@@ -140,6 +140,10 @@ bool WeatherData::fetch() {
         w.windMph = c.value("wind_speed_10m", 0.0f);
         w.windDir = c.value("wind_direction_10m", 0);
         w.humidity = c.value("relative_humidity_2m", 0);
+        w.dewPoint = c.value("dew_point_2m", 0.0f);
+        w.pressure = c.value("pressure_msl", 0.0f);
+        w.visibility = c.value("visibility", 0.0f);
+        w.cloudCover = c.value("cloud_cover", 0);
         w.code = c.value("weather_code", 0);
         w.isDay = c.value("is_day", 1) != 0;
 
