@@ -60,6 +60,8 @@ void showHelp(void) {
 "--uiscale <factor>               UI global scaling (default: 1)\n"
 "--hide-cursor                    Hide the mouse pointer (kiosk screens)\n"
 "--zoom <km>                      Initial map radius in km (default: 25)\n"
+"--weather                        Add a local weather page (Open-Meteo; W to show)\n"
+"--weather-start                  Start on the weather page\n"
 "--transit                        Add a TfL departures page (toggle with T or Tab)\n"
 "--transit-loc <lat> <lon>        Location for departures (default: --lat/--lon)\n"
 "--transit-radius <meters>        Walking radius for stops (default: 1000, ~15 min)\n"
@@ -81,6 +83,9 @@ int main(int argc, char **argv) {
     View view(&appData);
 
     TransitBoard transit;
+    WeatherData weatherData;
+    bool weatherEnabled = false;
+    bool weatherStart = false;
     bool transitEnabled = false;
     bool transitStart = false;
     double transitLat = 0, transitLon = 0;
@@ -117,6 +122,11 @@ int main(int argc, char **argv) {
             view.hideCursor = true;
         } else if (!strcmp(argv[j],"--zoom") && more) {
             view.maxDist = atof(argv[++j]);
+        } else if (!strcmp(argv[j],"--weather")) {
+            weatherEnabled = true;
+        } else if (!strcmp(argv[j],"--weather-start")) {
+            weatherEnabled = true;
+            weatherStart = true;
         } else if (!strcmp(argv[j],"--transit")) {
             transitEnabled = true;
         } else if (!strcmp(argv[j],"--transit-loc") && j + 2 < argc) {
@@ -150,6 +160,18 @@ int main(int argc, char **argv) {
 
     view.SDL_init();
     view.font_init();
+
+    if(weatherEnabled) {
+        if(appData.modes.fUserLat == 0 && appData.modes.fUserLon == 0) {
+            fprintf(stderr, "--weather needs --lat/--lon\n");
+            exit(1);
+        }
+        weatherData.start(appData.modes.fUserLat, appData.modes.fUserLon);
+        view.weather = &weatherData;
+        if(weatherStart) {
+            view.showPage(View::PAGE_WEATHER);
+        }
+    }
 
     if(transitEnabled) {
         if(transitLat == 0 && transitLon == 0) {

@@ -135,6 +135,8 @@ viz1090 will open an SDL window set to the resolution of your screen.
 | --fullscreen					| Render fullscreen rather than in a window | 
 | --screenindex [i]				| Display to open on (0 = main) | 
 | --zoom [km]					| Initial map radius in km (default 25) | 
+| --weather						| Add a local weather page from Open-Meteo; press W (or T to cycle pages) | 
+| --weather-start				| Start on the weather page | 
 | --hide-cursor					| Hide the crosshair pointer (for screens without a mouse) | 
 | --transit						| Add a TfL departures page; press T to switch pages, B for the mini board on the map | 
 | --transit-loc [lat] [lon]		| Location for departures (default --lat/--lon) | 

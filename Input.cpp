@@ -66,6 +66,13 @@ void Input::getInput()
 						exit(0);
 					break;
 
+					case SDLK_w:
+						// weather page, or back to the map
+						if((event.key.keysym.mod & (KMOD_GUI | KMOD_ALT | KMOD_CTRL)) == 0 && !event.key.repeat) {
+							view->showPage(view->page == View::PAGE_WEATHER ? View::PAGE_MAP : View::PAGE_WEATHER);
+						}
+					break;
+
 					case SDLK_b:
 						// mini departures board on the map
 						if((event.key.keysym.mod & (KMOD_GUI | KMOD_ALT | KMOD_CTRL)) == 0 && !event.key.repeat) {

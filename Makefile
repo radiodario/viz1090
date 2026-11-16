@@ -12,8 +12,8 @@ all: viz1090
 %.o: %.c %.cpp
 	$(CXX) $(CXXFLAGS) $(EXTRACFLAGS) -c $<
 
-viz1090: viz1090.o AppData.o AircraftList.o Aircraft.o Label.o AircraftLabel.o anet.o interactive.o mode_ac.o mode_s.o net_io.o Input.o View.o Map.o parula.o monokai.o TransitBoard.o
-	$(CXX) -o viz1090 viz1090.o AppData.o AircraftList.o Aircraft.o Label.o AircraftLabel.o anet.o interactive.o mode_ac.o mode_s.o net_io.o Input.o View.o Map.o parula.o monokai.o TransitBoard.o $(LIBS) $(LDFLAGS)
+viz1090: viz1090.o AppData.o AircraftList.o Aircraft.o Label.o AircraftLabel.o anet.o interactive.o mode_ac.o mode_s.o net_io.o Input.o View.o Map.o parula.o monokai.o TransitBoard.o WeatherData.o ViewWeather.o
+	$(CXX) -o viz1090 viz1090.o AppData.o AircraftList.o Aircraft.o Label.o AircraftLabel.o anet.o interactive.o mode_ac.o mode_s.o net_io.o Input.o View.o Map.o parula.o monokai.o TransitBoard.o WeatherData.o ViewWeather.o $(LIBS) $(LDFLAGS)
 
 clean:
 	rm -f \

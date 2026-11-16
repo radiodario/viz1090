@@ -255,6 +255,14 @@ void View::font_init() {
     transitHeadFont = loadFont("font/LondonUndergroundHeavy.ttf", transitSize * 3 / 2);
     miniBoardFont = loadFont("font/LondonUndergroundRegular.ttf", 9 * screen_uiscale);
     stopNameFont = loadFont("font/TerminusTTF-4.46.0.ttf", 8 * screen_uiscale);
+
+    // weather page, sized from the screen height
+    int wu = screen_height / 36;
+    weatherBigFont = loadFont("font/LondonUndergroundHeavy.ttf", wu * 4);
+    weatherHeadFont = loadFont("font/LondonUndergroundHeavy.ttf", wu * 3 / 2);
+    weatherTabFont = loadFont("font/LondonUndergroundHeavy.ttf", wu);
+    weatherTextFont = loadFont("font/TerminusTTF-Bold-4.46.0.ttf", wu);
+    weatherSmallFont = loadFont("font/TerminusTTF-4.46.0.ttf", wu * 4 / 5);
     if(stopNameFont) {
         int w = 0;
         TTF_SizeUTF8(stopNameFont, "M", &w, &stopNameFontHeight);
@@ -1304,9 +1312,16 @@ void View::draw() {
         SDL_Delay(static_cast<Uint32>(targetFrameTime - lastFrameTime));
     }
  
-    if(transit && rotateSeconds > 0 &&
+    if((transit || weather) && rotateSeconds > 0 &&
        std::chrono::steady_clock::now() - pageShownTime > std::chrono::milliseconds((int)(rotateSeconds * 1000))) {
         togglePage();
+    }
+
+    if(page == PAGE_WEATHER) {
+        drawWeather();
+        presentFrame();
+        lastFrameTime = elapsed(drawStartTime);
+        return;
     }
 
     if(page == PAGE_TRANSIT) {
@@ -1364,7 +1379,7 @@ void View::draw() {
 //
 
 void View::showPage(Page newPage) {
-    if(newPage == PAGE_TRANSIT && !transit) {
+    if((newPage == PAGE_TRANSIT && !transit) || (newPage == PAGE_WEATHER && !weather)) {
         return;
     }
     page = newPage;
@@ -1374,8 +1389,22 @@ void View::showPage(Page newPage) {
     }
 }
 
+// map -> departures -> weather -> map, skipping pages that aren't enabled
 void View::togglePage() {
-    showPage(page == PAGE_MAP ? PAGE_TRANSIT : PAGE_MAP);
+    Page order[] = {PAGE_MAP, PAGE_TRANSIT, PAGE_WEATHER};
+    int current = 0;
+    for(int i = 0; i < 3; i++) {
+        if(order[i] == page) {
+            current = i;
+        }
+    }
+    for(int step = 1; step <= 3; step++) {
+        Page next = order[(current + step) % 3];
+        if(next == PAGE_MAP || (next == PAGE_TRANSIT && transit) || (next == PAGE_WEATHER && weather)) {
+            showPage(next);
+            return;
+        }
+    }
 }
 
 static SDL_Color lineBadgeColor(const Departure &dep) {
@@ -2242,6 +2271,12 @@ View::View(AppData *appData){
 
     page                    = PAGE_MAP;
     transit                 = NULL;
+    weather                 = NULL;
+    weatherBigFont          = NULL;
+    weatherHeadFont         = NULL;
+    weatherTabFont          = NULL;
+    weatherTextFont         = NULL;
+    weatherSmallFont        = NULL;
     rotateSeconds           = 0;
     transitScale            = 1.5;
     transitFont             = NULL;

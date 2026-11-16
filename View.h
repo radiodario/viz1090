@@ -36,6 +36,7 @@
 #include "Map.h"
 #include "Style.h"
 #include "TransitBoard.h"
+#include "WeatherData.h"
 #include "SDL2/SDL.h"
 #include "SDL2/SDL_ttf.h" 
 #include <chrono>
@@ -128,9 +129,17 @@ class View {
 		void draw();
 
 		// pages: the aircraft map, and the TfL transit board
-		enum Page { PAGE_MAP, PAGE_TRANSIT };
+		enum Page { PAGE_MAP, PAGE_TRANSIT, PAGE_WEATHER };
 		Page page;
 		TransitBoard *transit;          // NULL unless --transit is given
+		WeatherData *weather;           // NULL unless --weather is given
+		void drawWeather();
+		void drawWeatherGlyph(int code, bool isDay, int cx, int cy, int px);
+		TTF_Font *weatherBigFont;
+		TTF_Font *weatherHeadFont;
+		TTF_Font *weatherTabFont;
+		TTF_Font *weatherTextFont;
+		TTF_Font *weatherSmallFont;
 		float rotateSeconds;            // 0 = no automatic page rotation
 		float transitScale;             // board text size relative to the map UI
 		TTF_Font *transitFont;          // London Underground Regular
