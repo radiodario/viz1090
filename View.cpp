@@ -1328,6 +1328,7 @@ void View::draw() {
     if(busSelected && !selectedBus()) {
         busSelected = false;  // that bus has finished its run
     }
+    updateTransitAnimation();
 
     drawWalkRoute();
     drawBusRoute();
@@ -1755,6 +1756,98 @@ float View::stopArrowHeading(const StopMarker &stop) {
     return heading;
 }
 
+// Ease buses towards their latest estimate, fade the selection in and out,
+// and track how stale the TfL data is.
+void View::updateTransitAnimation() {
+    auto now = std::chrono::steady_clock::now();
+    float dt = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastAnimTime).count() / 1000.0f;
+    dt = std::max(0.0f, std::min(0.25f, dt));
+    lastAnimTime = now;
+
+    // buses: exponential ease, so refresh jumps become short glides
+    float k = 1.0f - expf(-dt / 0.35f);
+    for(BusMarker &bus : frameBuses) {
+        auto it = busAnim.find(bus.vehicleId);
+        if(it == busAnim.end()) {
+            BusAnim a;
+            a.lat = bus.lat;
+            a.lon = bus.lon;
+            a.firstSeen = now;
+            a.lastSeen = now;
+            busAnim[bus.vehicleId] = a;
+            continue;
+        }
+        BusAnim &a = it->second;
+        a.lat += (bus.lat - a.lat) * k;
+        a.lon += (bus.lon - a.lon) * k;
+        a.lastSeen = now;
+        bus.lat = a.lat;
+        bus.lon = a.lon;
+    }
+    for(auto it = busAnim.begin(); it != busAnim.end();) {
+        if(now - it->second.lastSeen > std::chrono::seconds(60)) {
+            it = busAnim.erase(it);
+        } else {
+            ++it;
+        }
+    }
+
+    // selection fade: in over ~0.3s, and back out when deselected
+    if(stopSelected) {
+        fadeKind = FADE_STOP;
+    } else if(busSelected) {
+        fadeKind = FADE_BUS;
+    }
+    float target = (stopSelected || busSelected) ? 1.0f : 0.0f;
+    selectionFade += (target - selectionFade) * (1.0f - expf(-dt / 0.1f));
+    if(target == 0 && selectionFade < 0.01f) {
+        selectionFade = 0;
+        fadeKind = FADE_NONE;
+    }
+
+    // stale data drifts to grey, like aircraft we've stopped hearing
+    float age = transit ? transit->dataAgeSeconds() : 0;
+    transitStale = std::max(0.0f, std::min(1.0f, (age - 90.0f) / 120.0f));
+}
+
+bool View::stopDimmed(const StopMarker &stop) {
+    if(fadeKind == FADE_STOP) {
+        return !(stop.lat == selectedStop.lat && stop.lon == selectedStop.lon);
+    }
+    if(fadeKind == FADE_BUS) {
+        const BusMarker *bus = selectedBus();
+        return bus ? !busCallsAt(*bus, stop.id) : false;
+    }
+    return false;
+}
+
+bool View::busDimmed(const BusMarker &bus) {
+    if(fadeKind == FADE_BUS) {
+        return bus.vehicleId != selectedBusId;
+    }
+    if(fadeKind == FADE_STOP) {
+        return !busCallsAt(bus, selectedStop.id);
+    }
+    return false;
+}
+
+// Apply the animated selection dimming and staleness to a transit colour.
+SDL_Color View::transitColor(SDL_Color c, bool dimmed) {
+    float scale = dimmed ? 1.0f - 0.67f * selectionFade : 1.0f;
+    SDL_Color out = c;
+    out.r = (Uint8)(c.r * scale);
+    out.g = (Uint8)(c.g * scale);
+    out.b = (Uint8)(c.b * scale);
+    if(transitStale > 0) {
+        SDL_Color grey = style.planeGoneColor;
+        out.r = (Uint8)(out.r + (grey.r * scale - out.r) * transitStale);
+        out.g = (Uint8)(out.g + (grey.g * scale - out.g) * transitStale);
+        out.b = (Uint8)(out.b + (grey.b * scale - out.b) * transitStale);
+    }
+    out.a = c.a;
+    return out;
+}
+
 const BusMarker *View::selectedBus() {
     for(const BusMarker &bus : frameBuses) {
         if(bus.vehicleId == selectedBusId) {
@@ -1838,22 +1931,8 @@ void View::drawBuses() {
     text.setColor(style.white);
 
     for(const BusMarker &bus : frameBuses) {
-        // with a stop selected, only buses calling there stay bright;
-        // with a bus selected, only that bus
-        bool faded = false;
-        if(busSelected) {
-            faded = bus.vehicleId != selectedBusId;
-        } else if(stopSelected) {
-            faded = !busCallsAt(bus, selectedStop.id);
-        }
-        auto fade = [faded](SDL_Color c) {
-            if(faded) {
-                c.r = c.r * 30 / 100;
-                c.g = c.g * 30 / 100;
-                c.b = c.b * 30 / 100;
-            }
-            return c;
-        };
+        bool dimmed = busDimmed(bus);
+        auto fade = [&](SDL_Color c) { return transitColor(c, dimmed); };
         SDL_Color fill = fade(body);
         SDL_Color outline = fade(edge);
         text.setColor(fade(style.white));
@@ -1878,6 +1957,20 @@ void View::drawBuses() {
         }
         filledPolygonRGBA(renderer, vx, vy, 4, fill.r, fill.g, fill.b, SDL_ALPHA_OPAQUE);
         polygonRGBA(renderer, vx, vy, 4, outline.r, outline.g, outline.b, SDL_ALPHA_OPAQUE);
+
+        // new bus: a ring of dots collapsing onto it, like a new aircraft
+        auto anim = busAnim.find(bus.vehicleId);
+        if(anim != busAnim.end()) {
+            float age = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - anim->second.firstSeen).count();
+            if(age < 600.0f) {
+                float ratio = age / 600.0f;
+                float radius = (1.0f - ratio * ratio) * 12.0f * screen_uiscale;
+                for(float theta = 0; theta < 2 * M_PI; theta += M_PI / 4) {
+                    filledCircleRGBA(renderer, x + radius * cos(theta), y + radius * sin(theta), std::max(1, screen_uiscale / 2),
+                                     fill.r, fill.g, fill.b, (Uint8)(255 * ratio));
+                }
+            }
+        }
 
         text.setPosition(x + (int)len + screen_uiscale, y - (int)len);
         text.setText(bus.line);
@@ -1984,19 +2077,9 @@ void View::drawTransitStops() {
             continue;
         }
 
-        // with a stop selected, the others fade back (not out)
-        bool faded = stopSelected && !(stop.lat == selectedStop.lat && stop.lon == selectedStop.lon);
-        if(busSelected && selectedBus()) {
-            faded = !busCallsAt(*selectedBus(), stop.id);
-        }
-        auto fade = [faded](SDL_Color c) {
-            if(faded) {
-                c.r = c.r * 35 / 100;
-                c.g = c.g * 35 / 100;
-                c.b = c.b * 35 / 100;
-            }
-            return c;
-        };
+        // with a stop or bus selected, the others fade back (not out)
+        bool dimmed = stopDimmed(stop);
+        auto fade = [&](SDL_Color c) { return transitColor(c, dimmed); };
 
         SDL_Color color = fade(stop.station ? SDL_Color{250, 123, 5, 255} : SDL_Color{220, 36, 31, 255});
         float heading = stopArrowHeading(stop);
@@ -2024,6 +2107,25 @@ void View::drawTransitStops() {
             boxRGBA(renderer, x - barW, y - barH / 2, x + barW, y + barH / 2, bar.r, bar.g, bar.b, SDL_ALPHA_OPAQUE);
         } else {
             boxRGBA(renderer, x - half, y - half, x + half, y + half, color.r, color.g, color.b, SDL_ALPHA_OPAQUE);
+        }
+
+        // a bus is due here: pulse an expanding ring, like an aircraft position ping
+        {
+            auto nowT = std::chrono::steady_clock::now();
+            bool due = false;
+            for(const auto &arrival : stop.next) {
+                long secs = std::chrono::duration_cast<std::chrono::seconds>(arrival.second - nowT).count();
+                if(secs >= -15 && secs <= 15) {
+                    due = true;
+                    break;
+                }
+            }
+            if(due) {
+                long ms = std::chrono::duration_cast<std::chrono::milliseconds>(nowT.time_since_epoch()).count();
+                float phase = (ms % 1200) / 1200.0f;
+                int rr = (int)(2 * half + phase * 5 * half);
+                circleRGBA(renderer, x, y, rr, color.r, color.g, color.b, (Uint8)(220 * (1.0f - phase)));
+            }
         }
 
         bool selected = isSelected(stop);
@@ -2147,6 +2249,10 @@ View::View(AppData *appData){
     miniBoard               = true;
     stopSelected            = false;
     busSelected             = false;
+    fadeKind                = FADE_NONE;
+    selectionFade           = 0;
+    transitStale            = 0;
+    lastAnimTime            = std::chrono::steady_clock::now();
     hideCursor              = false;
     miniBoardFont           = NULL;
     stopNameFont            = NULL;

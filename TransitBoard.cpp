@@ -741,6 +741,14 @@ std::vector<Departure> TransitBoard::snapshot() {
     return live;
 }
 
+float TransitBoard::dataAgeSeconds() {
+    std::lock_guard<std::mutex> guard(lock);
+    if(!haveUpdate) {
+        return 0;
+    }
+    return std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - lastUpdate).count() / 1000.0f;
+}
+
 std::string TransitBoard::status() {
     std::lock_guard<std::mutex> guard(lock);
 

@@ -97,6 +97,9 @@ public:
     // Short human-readable state, e.g. "54 stops, updated 12s ago".
     std::string status();
 
+    // Seconds since arrivals last refreshed (0 before the first refresh).
+    float dataAgeSeconds();
+
     double lat;
     double lon;
     int radiusMeters;

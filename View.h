@@ -158,6 +158,25 @@ class View {
 		bool busSelected;
 		std::string selectedBusId;
 		const BusMarker *selectedBus();
+
+		// animation state, in the spirit of the aircraft: buses ease to new
+		// estimates and burst in when new; selection fades in and out
+		struct BusAnim {
+			double lat;
+			double lon;
+			std::chrono::steady_clock::time_point firstSeen;
+			std::chrono::steady_clock::time_point lastSeen;
+		};
+		std::map<std::string, BusAnim> busAnim;
+		enum FadeKind { FADE_NONE, FADE_STOP, FADE_BUS };
+		FadeKind fadeKind;              // what the current (or fading-out) selection is
+		float selectionFade;            // 0 = nothing dimmed, 1 = fully dimmed
+		float transitStale;             // 0 = fresh TfL data, 1 = very stale
+		std::chrono::steady_clock::time_point lastAnimTime;
+		void updateTransitAnimation();
+		bool stopDimmed(const StopMarker &stop);
+		bool busDimmed(const BusMarker &bus);
+		SDL_Color transitColor(SDL_Color c, bool dimmed);
 		bool busCallsAt(const BusMarker &bus, const std::string &stopId);
 		bool miniBoard;                 // toggled with B
 		TTF_Font *miniBoardFont;
