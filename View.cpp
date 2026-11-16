@@ -1786,7 +1786,18 @@ void View::drawTransitStops() {
             continue;
         }
 
-        SDL_Color color = stop.station ? SDL_Color{250, 123, 5, 255} : SDL_Color{220, 36, 31, 255};
+        // with a stop selected, the others fade back (not out)
+        bool faded = stopSelected && !(stop.lat == selectedStop.lat && stop.lon == selectedStop.lon);
+        auto fade = [faded](SDL_Color c) {
+            if(faded) {
+                c.r = c.r * 35 / 100;
+                c.g = c.g * 35 / 100;
+                c.b = c.b * 35 / 100;
+            }
+            return c;
+        };
+
+        SDL_Color color = fade(stop.station ? SDL_Color{250, 123, 5, 255} : SDL_Color{220, 36, 31, 255});
         float heading = stopArrowHeading(stop);
         if(heading >= 0 && !stop.station) {
             // arrow pointing the way buses leave the stop, along its road
@@ -1801,8 +1812,8 @@ void View::drawTransitStops() {
                              color.r, color.g, color.b, SDL_ALPHA_OPAQUE);
         } else if(stop.station) {
             // simplified TfL roundel: coloured ring with a navy bar across
-            SDL_Color ring = stop.railMode == "tube" ? SDL_Color{220, 36, 31, 255} : SDL_Color{238, 118, 35, 255};
-            SDL_Color bar = {16, 6, 159, 255};
+            SDL_Color ring = fade(stop.railMode == "tube" ? SDL_Color{220, 36, 31, 255} : SDL_Color{238, 118, 35, 255});
+            SDL_Color bar = fade(SDL_Color{16, 6, 159, 255});
             int r = 3 * half;
             int inner = r * 6 / 10;
             filledCircleRGBA(renderer, x, y, r, ring.r, ring.g, ring.b, SDL_ALPHA_OPAQUE);
@@ -1861,7 +1872,7 @@ void View::drawTransitStops() {
         placed.push_back(box);
 
         text.setFont(mapBoldFont);
-        text.setColor(style.labelColor);
+        text.setColor(fade(style.labelColor));
         text.setPosition(tx, ty);
         text.setText(id);
         text.draw(renderer);
@@ -1870,7 +1881,7 @@ void View::drawTransitStops() {
         // full stop name in small type under the code
         if(showName) {
             text.setFont(stopNameFont);
-            text.setColor(style.grey);
+            text.setColor(fade(style.grey));
             text.setPosition(tx, ty);
             text.setText(stop.name);
             text.draw(renderer);
@@ -1886,7 +1897,7 @@ void View::drawTransitStops() {
             }
             std::string s = arrival.first + " " + std::to_string(mins) + "m";
             // dim the ones you can't walk to in time
-            text.setColor(mins <= stop.walkMinutes ? style.grey_dark : style.subLabelColor);
+            text.setColor(fade(mins <= stop.walkMinutes ? style.grey_dark : style.subLabelColor));
             text.setPosition(tx, ty);
             text.setText(s);
             text.draw(renderer);
