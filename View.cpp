@@ -384,40 +384,44 @@ void View::drawStatusBox(int *left, int *top, std::string label, std::string mes
     int labelWidth = (label.length() + ((label.length() > 0 ) ? 1 : 0)) * labelFontWidth;
     int messageWidth = (message.length() + ((message.length() > 0 ) ? 1 : 0)) * messageFontWidth;
 
-    if(*left + labelWidth + messageWidth + PAD > screen_width) {
-        *left = PAD;
+    // boxes run right to left from the bottom-right corner: *left is the
+    // right edge of the next box
+    int x = *left - labelWidth - messageWidth;
+    if(x < PAD) {
+        *left = screen_width - PAD;
         *top = *top - messageFontHeight - PAD;
+        x = *left - labelWidth - messageWidth;
     }
 
     // filled black background
     if(messageWidth) {
-        roundedBoxRGBA(renderer, *left, *top, *left + labelWidth + messageWidth, *top + messageFontHeight, ROUND_RADIUS, style.buttonBackground.r, style.buttonBackground.g, style.buttonBackground.b, SDL_ALPHA_OPAQUE);
+        roundedBoxRGBA(renderer, x, *top, x + labelWidth + messageWidth, *top + messageFontHeight, ROUND_RADIUS, style.buttonBackground.r, style.buttonBackground.g, style.buttonBackground.b, SDL_ALPHA_OPAQUE);
     }
 
     // filled label box
     if(labelWidth) {
-        roundedBoxRGBA(renderer, *left, *top, *left + labelWidth, *top + messageFontHeight, ROUND_RADIUS,color.r, color.g, color.b, SDL_ALPHA_OPAQUE);
+        roundedBoxRGBA(renderer, x, *top, x + labelWidth, *top + messageFontHeight, ROUND_RADIUS,color.r, color.g, color.b, SDL_ALPHA_OPAQUE);
     }
 
     // outline message box
     if(messageWidth) {
-        roundedRectangleRGBA(renderer, *left, *top, *left + labelWidth + messageWidth, *top + messageFontHeight, ROUND_RADIUS,color.r, color.g, color.b, SDL_ALPHA_OPAQUE);
+        roundedRectangleRGBA(renderer, x, *top, x + labelWidth + messageWidth, *top + messageFontHeight, ROUND_RADIUS,color.r, color.g, color.b, SDL_ALPHA_OPAQUE);
     }
 
     Label currentLabel;
     currentLabel.setFont(labelFont);
     currentLabel.setColor(style.buttonBackground);
-    currentLabel.setPosition(*left + labelFontWidth/2, *top);
+    currentLabel.setPosition(x + labelFontWidth/2, *top);
     currentLabel.setText(label);
     currentLabel.draw(renderer);
     
     currentLabel.setFont(messageFont);
     currentLabel.setColor(color);
-    currentLabel.setPosition(*left + labelWidth + messageFontWidth/2, *top);
+    currentLabel.setPosition(x + labelWidth + messageFontWidth/2, *top);
     currentLabel.setText(message);
     currentLabel.draw(renderer);
 
-    *left = *left + labelWidth + messageWidth + PAD;
+    *left = x - PAD;
 }
 
 void View::drawCenteredStatusBox(std::string label, std::string message, SDL_Color color) {
@@ -434,7 +438,7 @@ void View::drawCenteredStatusBox(std::string label, std::string message, SDL_Col
 
 void View::drawStatus() {
 
-    int left = PAD; 
+    int left = screen_width - PAD;  // status boxes sit bottom right
     int top = screen_height - messageFontHeight - PAD;
 
     if(fps) {
@@ -1484,7 +1488,7 @@ void View::fitHomeToStops() {
     TTF_Font *boardFont = miniBoardFont ? miniBoardFont : mapFont;
     if(miniBoard && boardFont) {
         int pad = PAD * pixel_ratio;
-        boardH = 4 * (TTF_FontHeight(boardFont) + pad / 2) + 3 * pad + messageFontHeight + 2 * PAD;
+        boardH = 4 * (TTF_FontHeight(boardFont) + pad / 2) + 3 * pad;
     }
     int usableH = std::max(screen_height / 2, screen_height - boardH);
 
@@ -1911,9 +1915,10 @@ void View::drawMiniBoard() {
     const int numChars = 3, badgeChars = 5, destChars = 18, stopChars = 3, minsChars = 7;
     int boxW = (numChars + badgeChars + destChars + stopChars + minsChars + 4) * charW + 2 * pad;
     int boxH = ROWS * rowH + 2 * pad;
-    // bottom left, above the status boxes: the stops sit to the south-east of home
+    // bottom left (the status boxes only show on the planes page): the stops
+    // sit to the south-east of home
     int left = pad;
-    int top = screen_height - messageFontHeight - 2 * PAD - boxH - pad;
+    int top = screen_height - boxH - pad;
 
     roundedBoxRGBA(renderer, left, top, left + boxW, top + boxH, ROUND_RADIUS, 0, 0, 0, 220);
     roundedRectangleRGBA(renderer, left, top, left + boxW, top + boxH, ROUND_RADIUS, style.grey_dark.r, style.grey_dark.g, style.grey_dark.b, 255);

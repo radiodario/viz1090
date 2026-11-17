@@ -30,3 +30,4 @@ viz1090
 home.conf
 font/LondonUnderground*.ttf
 *.d
+build-pi/
