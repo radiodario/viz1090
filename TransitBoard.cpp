@@ -303,6 +303,7 @@ bool TransitBoard::fetchArrivals() {
                 dep.destination = destination;
                 dep.stopName = stop->name;
                 dep.stopIndicator = stop->indicator;
+                dep.stopId = stop->id;
                 dep.mode = a.value("modeName", "");
                 dep.walkMinutes = stop->walkMinutes;
                 rows[key] = dep;

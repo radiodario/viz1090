@@ -24,6 +24,7 @@ struct Departure {
     std::string destination;
     std::string stopName;
     std::string stopIndicator;  // e.g. "Stop ND", empty for stations
+    std::string stopId;         // NaPTAN id, to find the stop's marker (and its direction)
     std::string mode;           // "bus", "overground", "tube", ...
     int walkMinutes;
     // absolute arrival times, so the board counts down between fetches

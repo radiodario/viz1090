@@ -1777,7 +1777,7 @@ void View::drawTransit() {
     int walkW = 0;
     TTF_SizeUTF8(font, "88m", &walkW, &digitsH);
     const int dueChars = (3 * minsSlot) / charW + 1;
-    int flexible = totalChars - 3 - badgeChars - codeChars - walkChars - dueChars - 5;
+    int flexible = totalChars - 3 - badgeChars - codeChars - walkChars - dueChars - 5 - 4;  // 4: direction arrow
     bool showStop = flexible >= 36;
     int destChars = showStop ? flexible * 55 / 100 : flexible;
     if(destChars > 34) {
@@ -1794,7 +1794,10 @@ void View::drawTransit() {
     int xCode = xBadge + (badgeChars + 1) * charW;
     int codeW = 0, codeH = 0;
     TTF_SizeUTF8(font, "WW", &codeW, &codeH);
-    int xDest = xCode + std::max((codeChars + 1) * charW, codeW + 2 * charW);
+    // after the code: a small arrow for the way buses leave the stop
+    int arrowSize = fontH * 7 / 10;
+    int xArrow = xCode + std::max(codeChars * charW, codeW + charW / 2);
+    int xDest = xArrow + arrowSize + 2 * charW;
     int xStop = xDest + (destChars + 1) * charW;
     int xWalk = xStop + (showStop ? (stopChars + 1) * charW : 0);
     int xDue = xWalk + (walkChars + 1) * charW;
@@ -1812,6 +1815,10 @@ void View::drawTransit() {
     lineRGBA(renderer, left, top - pad / 2, screen_width - left, top - pad / 2, style.grey_dark.r, style.grey_dark.g, style.grey_dark.b, 255);
 
     std::vector<Departure> board = transit->snapshot();
+    std::map<std::string, StopMarker> stopsById;
+    for(const StopMarker &m : transit->stopMarkers()) {
+        stopsById[m.id] = m;
+    }
 
     int maxRows = (screen_height - top - rowH - 2 * pad) / rowH;
     if(maxRows < 0) {
@@ -1845,6 +1852,24 @@ void View::drawTransit() {
         text.setPosition(xCode, top);
         text.setText(dm(stopCode(dep.stopIndicator)));
         text.draw(renderer);
+
+        // which way the bus is heading, as on the map's stop arrows (no heading)
+        auto stopIt = stopsById.find(dep.stopId);
+        if(stopIt != stopsById.end() && !stopIt->second.station) {
+            float heading = stopArrowHeading(stopIt->second);
+            if(heading >= 0) {
+                float hx = sinf(heading * (float)M_PI / 180.0f);
+                float hy = -cosf(heading * (float)M_PI / 180.0f);
+                float cx = xArrow + arrowSize / 2.0f + charW / 2.0f;
+                float cy = top + fontH / 2.0f;
+                float len = arrowSize / 2.0f, wid = arrowSize / 2.6f;
+                filledTrigonRGBA(renderer,
+                                 cx + hx * len, cy + hy * len,
+                                 cx - hx * len - hy * wid, cy - hy * len + hx * wid,
+                                 cx - hx * len + hy * wid, cy - hy * len - hx * wid,
+                                 style.white.r, style.white.g, style.white.b, SDL_ALPHA_OPAQUE);
+            }
+        }
 
         text.setColor(style.white);
         text.setPosition(xDest, top);
