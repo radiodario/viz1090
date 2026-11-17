@@ -87,6 +87,7 @@ int main(int argc, char **argv) {
     View view(&appData);
 
     TransitBoard transit;
+    TransitBoard browseBoard;  // stops around wherever the map is panned to
     WeatherData weatherData;
     RadarData radarData;
     bool weatherEnabled = false;
@@ -215,6 +216,8 @@ int main(int argc, char **argv) {
         }
         transit.start(transitLat, transitLon, transitRadius);
         view.transit = &transit;
+        browseBoard.startBrowse();
+        view.browse = &browseBoard;
         if(transitStart) {
             view.showPage(View::PAGE_TRANSIT);
         }

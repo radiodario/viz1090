@@ -1,2 +1,2 @@
 FROM viz1090-pi-build
-RUN apt-get update && apt-get install -y --no-install-recommends xvfb xauth ca-certificates imagemagick && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends xvfb xauth ca-certificates imagemagick xdotool && rm -rf /var/lib/apt/lists/*

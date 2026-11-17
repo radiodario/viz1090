@@ -70,6 +70,11 @@ TransitBoard::TransitBoard() {
     radiusMeters = 1000;
     running = false;
     haveUpdate = false;
+    browse = false;
+    active = true;
+    recentreWanted = false;
+    wantLat = wantLon = 0;
+    wantRadius = 0;
 }
 
 TransitBoard::~TransitBoard() {
@@ -89,7 +94,87 @@ void TransitBoard::start(double lat, double lon, int radiusMeters) {
     worker = std::thread(&TransitBoard::run, this);
 }
 
+void TransitBoard::startBrowse() {
+    browse = true;
+    active = false;
+    curl_global_init(CURL_GLOBAL_DEFAULT);
+    running = true;
+    worker = std::thread(&TransitBoard::run, this);
+}
+
+void TransitBoard::recentre(double lat, double lon, int radiusMeters) {
+    std::lock_guard<std::mutex> guard(lock);
+    wantLat = lat;
+    wantLon = lon;
+    wantRadius = radiusMeters;
+    recentreWanted = true;
+}
+
+void TransitBoard::setActive(bool a) {
+    active = a;
+}
+
+void TransitBoard::runBrowse() {
+    long long nextArrivals = 0;  // ms on the steady clock
+    auto nowMs = [] {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now().time_since_epoch()).count();
+    };
+    bool haveStops = false;
+    long long stopsRetryAt = 0;
+    while(running) {
+        if(!active) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(250));
+            continue;
+        }
+
+        bool moved = false;
+        {
+            std::lock_guard<std::mutex> guard(lock);
+            if(recentreWanted) {
+                lat = wantLat;
+                lon = wantLon;
+                radiusMeters = wantRadius;
+                recentreWanted = false;
+                moved = true;
+            }
+        }
+        bool retry = !haveStops && stopsRetryAt && nowMs() >= stopsRetryAt;
+        if(moved || retry) {
+            haveStops = fetchStops();
+            stopsRetryAt = 0;
+            if(!haveStops) {
+                // TfL trouble (not just an area without stops): look again shortly
+                std::lock_guard<std::mutex> guard(lock);
+                if(lastError != "no stops found") {
+                    stopsRetryAt = nowMs() + STOPS_RETRY_S * 1000;
+                }
+            }
+            if(!haveStops) {
+                // nothing here (outside London, or TfL unreachable): clear the old area
+                std::lock_guard<std::mutex> guard(lock);
+                stops.clear();
+                markers.clear();
+                vehicles.clear();
+                lineIds.clear();
+            }
+            nextArrivals = 0;
+        }
+
+        if(haveStops && nowMs() >= nextArrivals) {
+            fetchArrivals();
+            fetchRouteSequences();
+            nextArrivals = nowMs() + ARRIVALS_INTERVAL_S * 1000;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    }
+}
+
 void TransitBoard::run() {
+    if(browse) {
+        runBrowse();
+        return;
+    }
+
     // sleep in short steps so shutdown is quick
     auto sleepFor = [this](int seconds) {
         for(int i = 0; i < seconds * 4 && running; i++) {
@@ -119,9 +204,25 @@ std::string TransitBoard::withKey(const std::string &url) {
     return url + (url.find('?') == std::string::npos ? "?" : "&") + "app_key=" + key;
 }
 
+// TfL allows ~50 requests a minute without an app key (500 with one); the
+// home and browse boards share this budget.
+static void waitForRequestSlot() {
+    static std::mutex rateLock;
+    static Clock::time_point last;
+    const char *key = getenv("TFL_APP_KEY");
+    auto interval = std::chrono::milliseconds(key && *key ? 150 : 1250);
+    std::lock_guard<std::mutex> guard(rateLock);
+    Clock::time_point now = Clock::now();
+    if(now - last < interval) {
+        std::this_thread::sleep_for(interval - (now - last));
+    }
+    last = Clock::now();
+}
+
 std::string TransitBoard::httpGet(const std::string &url, long *httpCode) {
     std::string body;
     *httpCode = 0;
+    waitForRequestSlot();
 
     CURL *curl = curl_easy_init();
     if(!curl) {
@@ -220,6 +321,9 @@ bool TransitBoard::fetchStops() {
     lineIds.assign(lines.begin(), lines.end());
     sequencesToFetch.clear();
     for(const auto &id : lineIds) {
+        if(lineSequences.count(id)) {
+            continue;  // known from an earlier area
+        }
         sequencesToFetch.push_back(id + "/inbound");
         sequencesToFetch.push_back(id + "/outbound");
     }
@@ -281,7 +385,7 @@ bool TransitBoard::fetchArrivals() {
                 continue;
             }
             const Stop *stop = it->second;
-            if(stop->walkMinutes > MAX_WALK_MINUTES) {
+            if(!browse && stop->walkMinutes > MAX_WALK_MINUTES) {
                 continue;  // inside the radius as the crow flies, but too far on foot
             }
 
@@ -515,16 +619,49 @@ void TransitBoard::fetchRouteSequences() {
         }
     }
 
-    for(const auto &lineDir : todo) {
+    for(size_t t = 0; t < todo.size(); t++) {
+        const std::string &lineDir = todo[t];
         if(!running) {
             return;
         }
-        long code;
         std::string line = lineDir.substr(0, lineDir.find('/'));
         std::string direction = lineDir.substr(lineDir.find('/') + 1);
-        std::string body = httpGet(std::string(TFL_BASE) + "/Line/" + line + "/Route/Sequence/" + direction, &code);
-        if(code != 200) {
-            continue;  // no positions for this line; the board still works
+
+        // routes rarely change: keep them on disk for a week
+        std::string cache = routeCachePath(line, direction);
+        std::string body;
+        struct stat st;
+        if(stat(cache.c_str(), &st) == 0 && time(NULL) - st.st_mtime < 7 * 24 * 3600) {
+            FILE *f = fopen(cache.c_str(), "rb");
+            if(f) {
+                char buf[65536];
+                size_t n;
+                while((n = fread(buf, 1, sizeof(buf), f)) > 0) {
+                    body.append(buf, n);
+                }
+                fclose(f);
+            }
+        }
+        if(body.empty()) {
+            long code;
+            body = httpGet(std::string(TFL_BASE) + "/Line/" + line + "/Route/Sequence/" + direction, &code);
+            if(code == 429) {
+                // rate limited: put the rest back for the next cycle
+                std::lock_guard<std::mutex> guard(lock);
+                sequencesToFetch.insert(sequencesToFetch.end(), todo.begin() + t, todo.end());
+                return;
+            }
+            if(code != 200) {
+                continue;  // no positions for this line; the board still works
+            }
+            FILE *f = fopen((cache + ".tmp").c_str(), "wb");
+            if(f) {
+                bool ok = fwrite(body.data(), 1, body.size(), f) == body.size();
+                ok = fclose(f) == 0 && ok;
+                if(ok) {
+                    rename((cache + ".tmp").c_str(), cache.c_str());
+                }
+            }
         }
         try {
             json doc = json::parse(body);
@@ -550,9 +687,26 @@ void TransitBoard::fetchRouteSequences() {
             auto &all = lineSequences[line];
             all.insert(all.end(), seqs.begin(), seqs.end());
         } catch(const std::exception &) {
+            remove(cache.c_str());
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(300));
     }
+}
+
+std::string TransitBoard::routeCachePath(const std::string &line, const std::string &direction) {
+    const char *home = getenv("HOME");
+    std::string dir = std::string(home ? home : "/tmp") + "/.cache";
+    mkdir(dir.c_str(), 0755);
+    dir += "/viz1090";
+    mkdir(dir.c_str(), 0755);
+    dir += "/routes";
+    mkdir(dir.c_str(), 0755);
+    std::string name = line + "_" + direction;
+    for(char &c : name) {
+        if(!isalnum((unsigned char)c) && c != '_' && c != '-') {
+            c = '_';
+        }
+    }
+    return dir + "/" + name + ".json";
 }
 
 // Place each bus between the stop it last passed and the next one, by how

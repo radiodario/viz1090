@@ -39,6 +39,7 @@
 
 #include <algorithm>
 #include <iostream>
+#include <set>
 #include <thread>
 
 // Set from a SIGUSR1 handler; the next frame is saved to SNAPSHOT_PATH.
@@ -1309,7 +1310,7 @@ void View::registerClick(int tapcount, int x, int y) {
         StopMarker nearestStop;
         int stopDist = radius2;
         if(transit && page == PAGE_MAP && maxDist <= 8.0f) {
-            for(const StopMarker &stop : transit->stopMarkers()) {
+            for(const StopMarker &stop : mapStops()) {
                 float dx, dy;
                 int sx, sy;
                 pxFromLonLat(&dx, &dy, stop.lon, stop.lat);
@@ -1350,7 +1351,13 @@ void View::registerClick(int tapcount, int x, int y) {
         } else if(foundStop && stopDist < selectionDist) {
             selectedStop = nearestStop;
             stopSelected = true;
-            transit->requestWalkRoute(selectedStop.lat, selectedStop.lon);
+            selectedStopHome = false;
+            for(const StopMarker &m : transit->stopMarkers()) {
+                selectedStopHome = selectedStopHome || m.id == selectedStop.id;
+            }
+            if(selectedStopHome) {
+                transit->requestWalkRoute(selectedStop.lat, selectedStop.lon);
+            }
         } else {
             selectedAircraft = selection;
         }
@@ -1441,9 +1448,21 @@ void View::draw() {
     drawGeography();
     drawRadar();
     drawScaleBars();
+    updateBrowse();
     frameBuses.clear();
     if(transit && maxDist <= 8.0f) {
         frameBuses = transit->busMarkers();
+        if(browse && browseLat != 0) {
+            std::set<std::string> seen;
+            for(const BusMarker &b : frameBuses) {
+                seen.insert(b.vehicleId);
+            }
+            for(const BusMarker &b : browse->busMarkers()) {
+                if(!seen.count(b.vehicleId)) {
+                    frameBuses.push_back(b);
+                }
+            }
+        }
     }
     if(busSelected && !selectedBus()) {
         busSelected = false;  // that bus has finished its run
@@ -2509,7 +2528,10 @@ void View::drawWalkRoute() {
     }
 
     SDL_Color color = style.selectedColor;
-    WalkRoute route = transit->walkRoute(selectedStop.lat, selectedStop.lon);
+    WalkRoute route;
+    if(selectedStopHome) {
+        route = transit->walkRoute(selectedStop.lat, selectedStop.lon);
+    }
 
     if(route.state == WalkRoute::READY) {
         int width = std::max(2, screen_uiscale);
@@ -2545,6 +2567,8 @@ void View::drawWalkRoute() {
     std::string message;
     if(route.state == WalkRoute::READY) {
         message = name + "  " + std::to_string(route.minutes) + " min  " + std::to_string(route.meters) + " m";
+    } else if(!selectedStopHome) {
+        message = name;  // a browsed stop: too far from home to walk
     } else if(route.state == WalkRoute::FAILED) {
         message = name + "  no route";
     } else {
@@ -2553,6 +2577,64 @@ void View::drawWalkRoute() {
     int left = PAD;
     int top = screen_height - 2 * (messageFontHeight + PAD);
     drawStatusBox(&left, &top, "walk", message, color);
+}
+
+// Stops and buses follow the map: once it is panned away from home (and
+// zoomed in enough to show stops), a second board looks around the middle of
+// the screen, re-centring whenever the map settles somewhere new.
+void View::updateBrowse() {
+    if(!browse || !transit) {
+        return;
+    }
+    const float BROWSE_MAX_DIST_KM = 3.0f;   // zoomed out further, stops are just a blob
+    const float AWAY_FROM_HOME_KM = 0.7f;    // home's own stops cover ~1 km
+    const int SETTLE_MS = 800;               // wait for a drag to stop
+
+    auto km = [](double lat1, double lon1, double lat2, double lon2) {
+        double dy = (lat2 - lat1) * 111.195;
+        double dx = (lon2 - lon1) * 111.195 * cos(lat1 * M_PI / 180.0);
+        return sqrt(dx * dx + dy * dy);
+    };
+
+    auto now = std::chrono::steady_clock::now();
+    if(centerLat != browsePrevLat || centerLon != browsePrevLon) {
+        browseMovedAt = now;
+        browsePrevLat = centerLat;
+        browsePrevLon = centerLon;
+    }
+
+    bool away = page == PAGE_MAP && !flying && maxDist <= BROWSE_MAX_DIST_KM &&
+                km(centerLat, centerLon, transit->lat, transit->lon) > AWAY_FROM_HOME_KM;
+    browse->setActive(away);
+    if(!away) {
+        browseLat = browseLon = 0;  // forget it, so coming back looks again
+        return;
+    }
+
+    int radius = std::max(400, std::min(800, (int)(maxDist * 1000)));
+    bool settled = now - browseMovedAt > std::chrono::milliseconds(SETTLE_MS);
+    bool far = browseLat == 0 || km(centerLat, centerLon, browseLat, browseLon) * 1000 > radius / 2;
+    if(settled && far) {
+        browse->recentre(centerLat, centerLon, radius);
+        browseLat = centerLat;
+        browseLon = centerLon;
+    }
+}
+
+std::vector<StopMarker> View::mapStops() {
+    std::vector<StopMarker> stops = transit->stopMarkers();
+    if(browse && browseLat != 0) {
+        std::set<std::string> seen;
+        for(const StopMarker &m : stops) {
+            seen.insert(m.id);
+        }
+        for(const StopMarker &m : browse->stopMarkers()) {
+            if(!seen.count(m.id)) {
+                stops.push_back(m);
+            }
+        }
+    }
+    return stops;
 }
 
 // Bus stops and stations on the map. Labels with the next arrivals appear
@@ -2576,7 +2658,7 @@ void View::drawTransitStops() {
     text.setFont(mapFont);
 
     // stations first, then nearest stops, so they win when labels would collide
-    std::vector<StopMarker> stops = transit->stopMarkers();
+    std::vector<StopMarker> stops = mapStops();
     auto isSelected = [this](const StopMarker &m) {
         return stopSelected && m.lat == selectedStop.lat && m.lon == selectedStop.lon;
     };
@@ -2766,6 +2848,10 @@ View::View(AppData *appData){
 
     page                    = PAGE_MAP;
     transit                 = NULL;
+    browse                  = NULL;
+    browseLat = browseLon   = 0;
+    browsePrevLat = browsePrevLon = 0;
+    selectedStopHome        = false;
     weather                 = NULL;
     radar                   = NULL;
     showRadar               = false;  // R shows rain over the map

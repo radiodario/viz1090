@@ -82,6 +82,14 @@ public:
 
     void start(double lat, double lon, int radiusMeters);
 
+    // Browse mode, for wherever the map has been panned to: only stops,
+    // arrivals and buses (no board, no walking routes), around a centre
+    // that moves with recentre(), and only while active.
+    void startBrowse();
+    void recentre(double lat, double lon, int radiusMeters);
+    void setActive(bool active);
+    bool browsing() const { return browse; }
+
     // Thread-safe copy of the current board, sorted by next catchable arrival.
     std::vector<Departure> snapshot();
 
@@ -120,6 +128,7 @@ private:
     };
 
     void run();
+    void runBrowse();
     bool fetchStops();
     bool fetchArrivals();
     void refineWalkTimes();
@@ -131,6 +140,12 @@ private:
 
     std::thread worker;
     std::atomic<bool> running;
+
+    bool browse;
+    std::atomic<bool> active;
+    bool recentreWanted;   // under lock, with the want* centre
+    double wantLat, wantLon;
+    int wantRadius;
 
     std::mutex lock;
     std::vector<Stop> stops;
@@ -159,6 +174,7 @@ private:
     std::vector<std::string> sequencesToFetch;
     std::vector<Vehicle> vehicles;
     void fetchRouteSequences();
+    std::string routeCachePath(const std::string &line, const std::string &direction);
     std::string lastError;
     std::chrono::steady_clock::time_point lastUpdate;
     bool haveUpdate;

@@ -160,6 +160,14 @@ class View {
 		float planeFade;                // 1 = planes fully drawn, 0 = hidden
 		void updateTransition();
 		TransitBoard *transit;          // NULL unless --transit is given
+		// stops and buses around wherever the map has been panned to,
+		// away from home (NULL unless --transit is given)
+		TransitBoard *browse;
+		void updateBrowse();
+		std::vector<StopMarker> mapStops();  // home stops plus browsed ones
+		double browseLat, browseLon;         // where browse last looked (0: nowhere)
+		double browsePrevLat, browsePrevLon;
+		std::chrono::steady_clock::time_point browseMovedAt;
 		WeatherData *weather;           // NULL unless --weather is given
 		RadarData *radar;               // rain radar (with --weather)
 		bool showRadar;                 // map overlay, toggled with R
@@ -217,6 +225,7 @@ class View {
 		// tapped stop: walking route from home is drawn on the map
 		bool stopSelected;
 		StopMarker selectedStop;
+		bool selectedStopHome;          // one of home's stops (has a walking route)
 		void drawWalkRoute();
 		void drawBuses();               // estimated bus positions
 		void drawBusRoute();            // selected bus: route ahead and next stops
