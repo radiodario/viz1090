@@ -445,7 +445,9 @@ void View::drawStatus() {
     }
 
 
-    if(planeFeed) {
+    if(transit && page != PAGE_PLANES) {
+        // the bus map is busy enough: plane status only with the planes
+    } else if(planeFeed) {
         char strPlaneCount[10] = " ";
         snprintf(strPlaneCount, 10, "%d", appData->numVisiblePlanes);
         drawStatusBox(&left, &top, "planes", strPlaneCount, style.buttonColor);
@@ -606,6 +608,9 @@ void View::drawPlaneIcon(int x, int y, float heading, SDL_Color planeColor)
 }
 
 void View::drawTrails(int left, int top, int right, int bottom) {
+    if(planeFade <= 0) {
+        return;  // mid-transition: no planes, no trails
+    }
     int currentX, currentY, prevX, prevY, colorVal;
     float dx, dy;   
 
@@ -1034,6 +1039,7 @@ void View::drawPlanes() {
                     if(p == selectedAircraft) {
                         planeColor = style.selectedColor;
                     }
+                    planeColor = lerpColor(planeColor, style.backgroundColor, 1.0f - planeFade);
 
 
                     if(outOfBounds(x,y) && planeFeed) {
@@ -1061,7 +1067,7 @@ void View::drawPlanes() {
                         drawPlaneIcon(usex, usey, useHeading, planeColor);
                     }
 
-                    if(p->altitude > 0) {
+                    if(p->altitude > 0 && planeFade >= 1) {
                         drawPlaneText(p);  // planes on the ground (altitude 0) go unlabelled
                     }
                 }
@@ -1380,6 +1386,7 @@ void View::draw() {
     }
 
     fitHomeToStops();
+    updateTransition();
     if(flying) {
         updateFlight();
     } else {
@@ -1404,7 +1411,7 @@ void View::draw() {
     drawTransitStops();
     drawBuses();
 
-    if(havePlanes()) {
+    if(havePlanes() && planeFade > 0) {
         for(int i = 0; i < 8; i++) {
             // if(resolveLabelConflicts() <  0.001f) {            
             //     break;
@@ -1534,6 +1541,40 @@ void View::updateFlight() {
     }
 }
 
+void View::updateTransition() {
+    float t = std::chrono::duration<float>(std::chrono::steady_clock::now() - transitionStart).count();
+    const float FADE_OUT_S = 0.8f, FADE_IN_S = 1.0f;
+    switch(transition) {
+    case TR_FADE_OUT:
+        planeFade = std::max(0.0f, 1.0f - t / FADE_OUT_S);
+        if(t >= FADE_OUT_S) {
+            transition = TR_FLY;
+            planeFade = 0;
+            mapRedraw = 1;  // trails are drawn into the map texture: drop them
+            flyTo(homeLat, homeLon, homeDist, 5.0f);
+        }
+        break;
+    case TR_FLY:
+        planeFade = 0;
+        if(!flying) {
+            transition = TR_FADE_IN;
+            transitionStart = std::chrono::steady_clock::now();
+        }
+        break;
+    case TR_FADE_IN:
+        planeFade = std::min(1.0f, t / FADE_IN_S);
+        if(t >= FADE_IN_S) {
+            transition = TR_NONE;
+            planeFade = 1;
+            mapRedraw = 1;  // bring the trails back
+        }
+        break;
+    default:
+        planeFade = 1;
+        break;
+    }
+}
+
 void View::showPage(Page newPage) {
     if((newPage == PAGE_TRANSIT && !transit) || (newPage == PAGE_WEATHER && !weather) ||
        (newPage == PAGE_PLANES && !havePlanes())) {
@@ -1545,6 +1586,8 @@ void View::showPage(Page newPage) {
     }
     Page previous = page;
     page = newPage;
+    transition = TR_NONE;
+    planeFade = 1;
     pageShownTime = std::chrono::steady_clock::now();
     if(page == PAGE_PLANES) {
         // all of London, straight away (we arrive from a full-screen page)
@@ -1558,7 +1601,9 @@ void View::showPage(Page newPage) {
     } else if(page == PAGE_MAP) {
         mapRedraw = 1;  // the map texture is stale after time away
         if(previous == PAGE_PLANES) {
-            flyTo(homeLat, homeLon, homeDist, 5.0f);  // zoom down to the buses
+            // zoom down to the buses (see updateTransition)
+            transition = TR_FADE_OUT;
+            transitionStart = std::chrono::steady_clock::now();
         } else if(previous != PAGE_MAP) {
             centerLat = homeLat;
             centerLon = homeLon;
@@ -2666,6 +2711,8 @@ View::View(AppData *appData){
     }
     planeFeed               = false;
     flying                  = false;
+    transition              = TR_NONE;
+    planeFade               = 1;
     homeFitted              = false;
     flySeconds              = 1;
     homeLat = homeLon = 0;

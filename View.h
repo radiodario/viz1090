@@ -150,6 +150,13 @@ class View {
 		float flyFromLat, flyFromLon, flyFromDist, flyToLat, flyToLon, flyToDist;
 		void flyTo(float lat, float lon, float dist, float seconds);
 		void updateFlight();
+		// planes page -> local map: fade the planes out, zoom with none
+		// drawn (the Pi can't do both smoothly), then fade them back in
+		enum Transition { TR_NONE, TR_FADE_OUT, TR_FLY, TR_FADE_IN };
+		Transition transition;
+		std::chrono::steady_clock::time_point transitionStart;
+		float planeFade;                // 1 = planes fully drawn, 0 = hidden
+		void updateTransition();
 		TransitBoard *transit;          // NULL unless --transit is given
 		WeatherData *weather;           // NULL unless --weather is given
 		RadarData *radar;               // rain radar (with --weather)
