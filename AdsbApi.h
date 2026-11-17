@@ -1,10 +1,10 @@
-// AdsbApi: aircraft from an online ADS-B aggregator instead of (or as well
-// as) a local dump1090. Defaults to adsb.lol (open data, no key), whose
-// /v2/point API matches ADS-B Exchange's v2 format, so airplanes.live or
-// adsb.fi also work with --adsb-api <base url>.
+// AdsbApi: aircraft from an online ADS-B aggregator instead of a local
+// dump1090. Both feeds speak ADS-B Exchange's v2 JSON:
+//   adsb.fi  (default) opendata.adsb.fi, ~1 request/s allowed, no daily cap
+//   adsb.lol           api.adsb.lol, only 500 requests a day: polled slowly
 //
-// A background thread polls every couple of seconds; the main loop copies
-// the latest batch into the AircraftList the map already draws.
+// A background thread polls while a map page is showing (setActive); the
+// main loop copies the latest batch into the AircraftList the map draws.
 
 #ifndef ADSBAPI_H
 #define ADSBAPI_H
@@ -32,7 +32,11 @@ public:
     ~AdsbApi();
 
     // centre and radius (nautical miles) of the area to fetch
-    void start(const std::string &baseUrl, double lat, double lon, int radiusNm);
+    // feed: "adsb.fi" or "adsb.lol"
+    void start(const std::string &feed, double lat, double lon, int radiusNm);
+
+    // poll only while someone can see the planes
+    void setActive(bool active);
 
     // latest batch; returns false if nothing new since the last call
     bool take(std::vector<ApiAircraft> *out);
@@ -42,6 +46,8 @@ private:
     bool fetch();
 
     std::string url;
+    int pollMs;
+    std::atomic<bool> active;
     std::thread worker;
     std::atomic<bool> running;
     std::mutex lock;

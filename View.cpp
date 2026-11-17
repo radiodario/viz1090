@@ -448,7 +448,7 @@ void View::drawStatus() {
     if(planeFeed) {
         char strPlaneCount[10] = " ";
         snprintf(strPlaneCount, 10, "%d", appData->numVisiblePlanes);
-        drawStatusBox(&left, &top, "adsb.lol", strPlaneCount, style.buttonColor);
+        drawStatusBox(&left, &top, "planes", strPlaneCount, style.buttonColor);
     } else if(noAdsb) {
         // no aircraft source: nothing to report
     } else if(!appData->connected) {
@@ -1469,14 +1469,28 @@ void View::fitHomeToStops() {
     homeFitted = true;
     float lat = (float)((latMin + latMax) / 2);
     float lon = (float)((lonMin + lonMax) / 2);
+
+    // keep the stops clear of the mini departure board along the bottom
+    int boardH = 0;
+    TTF_Font *boardFont = miniBoardFont ? miniBoardFont : mapFont;
+    if(miniBoard && boardFont) {
+        int pad = PAD * pixel_ratio;
+        boardH = 4 * (TTF_FontHeight(boardFont) + pad / 2) + 3 * pad;
+    }
+    int usableH = std::max(screen_height / 2, screen_height - boardH);
+
     // maxDist is half the longer screen side in km; leave room for labels
     double halfH = (latMax - latMin) / 2 * 111.195;
     double halfW = (lonMax - lonMin) / 2 * 111.195 * cos(lat * M_PI / 180.0);
     float longSide = std::max(screen_width, screen_height);
-    float dist = (float)std::max(halfW * longSide / screen_width, halfH * longSide / screen_height) * 1.15f;
+    float dist = (float)std::max(halfW * longSide / screen_width, halfH * longSide / usableH) * 1.15f;
+    dist = std::max(homeDist, dist);
+    // centre the stops in the area above the board: move the view's centre down
+    float kmPerPx = 2.0f * dist / longSide;
+    lat -= boardH / 2.0f * kmPerPx / 111.195f;
     homeLat = lat;
     homeLon = lon;
-    homeDist = std::max(homeDist, dist);
+    homeDist = dist;
     if(page == PAGE_MAP && !flying) {
         flyTo(homeLat, homeLon, homeDist, 1.5f);
     }

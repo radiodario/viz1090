@@ -167,4 +167,6 @@ AppData::AppData(){
     modes.quiet                   = 1;
 
     connected = false;
+    numVisiblePlanes = 0;
+    numPlanes = 0;
 }

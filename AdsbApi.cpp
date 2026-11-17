@@ -11,7 +11,6 @@
 
 using json = nlohmann::json;
 
-static const int POLL_MS = 2000;   // adsb.lol and friends ask for no more than ~1 request/s
 
 static size_t appendBody(char *data, size_t size, size_t count, void *out) {
     static_cast<std::string *>(out)->append(data, size * count);
@@ -20,7 +19,9 @@ static size_t appendBody(char *data, size_t size, size_t count, void *out) {
 
 AdsbApi::AdsbApi() {
     running = false;
+    active = true;
     fresh = false;
+    pollMs = 3000;
 }
 
 AdsbApi::~AdsbApi() {
@@ -30,20 +31,45 @@ AdsbApi::~AdsbApi() {
     }
 }
 
-void AdsbApi::start(const std::string &baseUrl, double lat, double lon, int radiusNm) {
+void AdsbApi::start(const std::string &feed, double lat, double lon, int radiusNm) {
     char u[512];
-    snprintf(u, sizeof(u), "%s/v2/point/%.3f/%.3f/%d", baseUrl.c_str(), lat, lon, radiusNm);
+    if(feed == "adsb.lol") {
+        snprintf(u, sizeof(u), "https://api.adsb.lol/v2/point/%.3f/%.3f/%d", lat, lon, radiusNm);
+        pollMs = 180000;  // 500 requests a day
+    } else {
+        snprintf(u, sizeof(u), "https://opendata.adsb.fi/api/v2/lat/%.3f/lon/%.3f/dist/%d", lat, lon, radiusNm);
+        pollMs = 3000;
+    }
     url = u;
     curl_global_init(CURL_GLOBAL_DEFAULT);
     running = true;
     worker = std::thread(&AdsbApi::run, this);
 }
 
+void AdsbApi::setActive(bool a) {
+    active = a;
+}
+
 void AdsbApi::run() {
+    int backoffMs = 0;
     while(running) {
         auto started = std::chrono::steady_clock::now();
-        int wait = fetch() ? POLL_MS : 15000;  // back off on errors
+        int wait = pollMs;
+        if(active) {
+            if(fetch()) {
+                backoffMs = 0;
+            } else {
+                // errors and rate limits: back off, up to 10 minutes
+                backoffMs = backoffMs ? std::min(600000, backoffMs * 2) : 15000;
+                wait = backoffMs;
+            }
+        } else {
+            wait = 250;  // idle until a map page shows
+        }
         while(running && std::chrono::steady_clock::now() - started < std::chrono::milliseconds(wait)) {
+            if(!active && wait > 250) {
+                break;
+            }
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
     }
@@ -74,7 +100,8 @@ bool AdsbApi::fetch() {
     std::vector<ApiAircraft> list;
     try {
         json doc = json::parse(body);
-        for(const json &a : doc.at("ac")) {
+        const json &list_ = doc.contains("ac") ? doc["ac"] : doc.at("aircraft");  // adsb.lol / adsb.fi
+        for(const json &a : list_) {
             if(!a.contains("lat") || !a.contains("lon") || !a.contains("hex")) {
                 continue;
             }

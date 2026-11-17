@@ -71,7 +71,7 @@ void showHelp(void) {
 "--transit-start                  Start on the departures page\n"
 "--rotate <seconds>               Rotate pages, the same time each\n"
 "--page-times <map,board,weather[,planes]> Rotate pages with their own times; weather 'cycle' = one full pass\n"
-"--adsb-api [url]                 Planes from an online feed (default https://api.adsb.lol)\n"
+"--adsb-api [adsb.fi|adsb.lol]    Planes from an online feed (default adsb.fi)\n"
     );
 }
 
@@ -92,7 +92,7 @@ int main(int argc, char **argv) {
     bool weatherEnabled = false;
     bool weatherStart = false;
     bool transitEnabled = false;
-    std::string adsbApiUrl;   // --adsb-api: planes from an online aggregator
+    std::string adsbApiUrl;   // --adsb-api: feed name, planes from an online aggregator
     AdsbApi adsbApi;
     bool transitStart = false;
     double transitLat = 0, transitLon = 0;
@@ -165,11 +165,11 @@ int main(int argc, char **argv) {
                 view.pageSeconds[i] = strcmp(tok, "cycle") == 0 ? 0 : atof(tok);
             }
         } else if (!strcmp(argv[j],"--adsb-api")) {
-            // optional base URL; adsb.lol by default
+            // optional feed name; adsb.fi by default
             if(more && argv[j + 1][0] != '-') {
                 adsbApiUrl = argv[++j];
             } else {
-                adsbApiUrl = "https://api.adsb.lol";
+                adsbApiUrl = "adsb.fi";
             }
         } else if (!strcmp(argv[j],"--rotate") && more) {
             transitEnabled = true;
@@ -244,6 +244,7 @@ int main(int argc, char **argv) {
         input.getInput();
         view.draw();
         if(view.planeFeed) {
+            adsbApi.setActive(view.page == View::PAGE_MAP || view.page == View::PAGE_PLANES);
             std::vector<ApiAircraft> batch;
             if(adsbApi.take(&batch)) {
                 appData.aircraftList.update(batch);
