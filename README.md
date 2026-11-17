@@ -131,7 +131,7 @@ viz1090 will open an SDL window set to the resolution of your screen.
 | --lat                         | Specify your latitude in degrees | 
 | --lon                         | Specify your longitude in degrees | 
 | --screensize [width] [height]	| Specify a resolution, otherwise use resolution of display | 
-| --uiscale [scale]				| Scale up UI elements by integer amounts for high resolution screen | 
+| --uiscale [factor]			| Scale everything; sizes otherwise follow the screen height | 
 | --fullscreen					| Render fullscreen rather than in a window | 
 | --screenindex [i]				| Display to open on (0 = main) | 
 | --zoom [km]					| Initial map radius in km (default 25) | 
@@ -142,7 +142,7 @@ viz1090 will open an SDL window set to the resolution of your screen.
 | --transit						| Add a TfL departures page; press T to switch pages, B for the mini board on the map | 
 | --transit-loc [lat] [lon]		| Location for departures (default --lat/--lon) | 
 | --transit-radius [m]			| Search radius for stops (default 1000); stops over 15 min walk are dropped | 
-| --transit-scale [factor]		| Departures text size relative to the map UI | 
+| --transit-scale [factor]		| Departures text size multiplier | 
 | --transit-start				| Start on the departures page | 
 | --rotate [seconds]			| Rotate pages, the same time each | 
 | --page-times [map,board,weather] | Rotate pages with their own times in seconds; weather `cycle` shows one full pass of its segments | 

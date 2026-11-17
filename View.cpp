@@ -248,32 +248,30 @@ void View::font_init() {
     labelFontWidth = 6 * screen_uiscale;
     labelFontHeight = 12 * screen_uiscale;
 
-    // departures board text, sized independently of the map UI
-    int transitSize = (int)(12 * screen_uiscale * transitScale + 0.5);
-    if(transitSize < 8) {
-        transitSize = 8;
-    }
-    // London Underground dot-matrix typeface (github.com/petykowski/London-Underground-Dot-Matrix-Typeface)
-    transitFont = loadFont("font/LondonUndergroundRegular.ttf", transitSize);
-    transitHeadFont = loadFont("font/LondonUndergroundHeavy.ttf", transitSize * 3 / 2);
-    miniBoardFont = loadFont("font/LondonUndergroundRegular.ttf", 9 * screen_uiscale);
-    stopNameFont = loadFont("font/TerminusTTF-4.46.0.ttf", 8 * screen_uiscale);
+    // every other font is a multiple of uiUnit (see SDL_init)
+    auto at = [this](float k) { return std::max(8, (int)lroundf(uiUnit * k)); };
 
-    // weather page, sized from the screen height
-    int wu = screen_height / 36;
-    weatherBigFont = loadFont("font/LondonUndergroundHeavy.ttf", wu * 4);
-    weatherHugeFont = loadFont("font/LondonUndergroundHeavy.ttf", wu * 8);
-    weatherHeadFont = loadFont("font/LondonUndergroundHeavy.ttf", wu * 3 / 2);
-    weatherTabFont = loadFont("font/LondonUndergroundHeavy.ttf", wu * 3 / 2);
-    weatherBodyFont = loadFont("font/TerminusTTF-Bold-4.46.0.ttf", wu * 3 / 2);
-    weatherTitleFont = loadFont("font/TerminusTTF-Bold-4.46.0.ttf", wu * 5 / 2);
-    weatherTextFont = loadFont("font/TerminusTTF-Bold-4.46.0.ttf", wu);
-    weatherSmallFont = loadFont("font/TerminusTTF-4.46.0.ttf", wu * 4 / 5);
+    // departures board: London Underground dot-matrix typeface
+    // (github.com/petykowski/London-Underground-Dot-Matrix-Typeface)
+    transitFont = loadFont("font/LondonUndergroundRegular.ttf", at(transitScale));
+    transitHeadFont = loadFont("font/LondonUndergroundHeavy.ttf", at(1.5f));     // page headings
+    miniBoardFont = loadFont("font/LondonUndergroundRegular.ttf", at(0.6f));
+    stopNameFont = loadFont("font/TerminusTTF-4.46.0.ttf", 8 * screen_uiscale);  // map labels
+
+    // weather page
+    weatherHugeFont = loadFont("font/LondonUndergroundHeavy.ttf", at(6.0f));     // "now" temperature
+    weatherBigFont = loadFont("font/LondonUndergroundHeavy.ttf", at(3.0f));      // big numbers
+    weatherHeadFont = loadFont("font/LondonUndergroundHeavy.ttf", at(1.2f));     // conditions, day names
+    weatherTabFont = loadFont("font/LondonUndergroundHeavy.ttf", at(1.0f));
+    weatherTitleFont = loadFont("font/TerminusTTF-Bold-4.46.0.ttf", at(1.5f));
+    weatherBodyFont = loadFont("font/TerminusTTF-Bold-4.46.0.ttf", at(1.0f));    // body text
+    weatherTextFont = loadFont("font/TerminusTTF-Bold-4.46.0.ttf", at(0.8f));    // details
+    weatherSmallFont = loadFont("font/TerminusTTF-4.46.0.ttf", at(0.65f));
     if(stopNameFont) {
         int w = 0;
         TTF_SizeUTF8(stopNameFont, "M", &w, &stopNameFontHeight);
     }
-    transitClockFont = loadFont("font/LondonUndergroundBold.ttf", transitSize * 3 / 2);
+    transitClockFont = loadFont("font/LondonUndergroundBold.ttf", at(1.5f));      // clock
     if(transitFont) {
         TTF_SizeUTF8(transitFont, "M", &transitFontWidth, &transitFontHeight);
     }
@@ -346,11 +344,19 @@ void View::SDL_init() {
     screen_height = pixel_height;
     if(point_width > 0 && pixel_width > point_width) {
         pixel_ratio = (pixel_width + point_width / 2) / point_width;
-        // a fullscreen window can report its pre-fullscreen size here, which
-        // made the ratio (and the whole UI) enormous; real displays are 1-3x
+        // a fullscreen window can report its pre-fullscreen size here; real displays are 1-3x
         pixel_ratio = std::max(1, std::min(3, pixel_ratio));
-        screen_uiscale *= pixel_ratio;
     }
+
+    // One sizing system for every page, from the screen height in pixels:
+    //  - uiUnit: the base text size (board rows, weather body); headings are
+    //    1.5x, details smaller, big numbers larger. Height / 27 is the board
+    //    size that reads well from 640x480 up to 4K.
+    //  - screen_uiscale: whole-number scale for the map's pixel-font labels
+    //    and icons, height / 540 (2 at 1080p).
+    // --uiscale multiplies both.
+    uiUnit = screen_height * uiScaleFactor / 27.0f;
+    screen_uiscale = std::max(1, (int)lroundf(screen_height * uiScaleFactor / 540.0f));
 
     mapTexture = SDL_CreateTexture(renderer,
                                SDL_PIXELFORMAT_ARGB8888,
@@ -2509,7 +2515,9 @@ View::View(AppData *appData){
     rotateSeconds           = 0;
     usePageTimes            = false;
     pageSeconds[0] = pageSeconds[1] = pageSeconds[2] = 0;
-    transitScale            = 1.5;
+    transitScale            = 1.0;
+    uiScaleFactor           = 1.0;
+    uiUnit                  = 16;
     transitFont             = NULL;
     transitHeadFont         = NULL;
     miniBoard               = true;

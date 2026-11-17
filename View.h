@@ -172,7 +172,7 @@ class View {
 		bool usePageTimes;              // --page-times given
 		float pageSeconds[3];           // per page (map, departures, weather); weather 0 = one full cycle
 		float weatherCycleSeconds();
-		float transitScale;             // board text size relative to the map UI
+		float transitScale;             // board text size, multiple of uiUnit (default 1)
 		TTF_Font *transitFont;          // London Underground Regular
 		TTF_Font *transitHeadFont;      // London Underground Heavy, for the heading
 		TTF_Font *transitClockFont;     // London Underground Bold (digits and ':')
@@ -262,7 +262,9 @@ class View {
 	    Map map;
 
 	    int screen_upscale;
-	    int screen_uiscale;
+	    int screen_uiscale;         // map pixel-font scale, derived from the screen height
+	    float uiScaleFactor;        // --uiscale: multiplies all sizes (default 1)
+	    float uiUnit;               // base text size in pixels, derived from the screen height
 	    int pixel_ratio;     // drawable pixels per window point (2 on Retina)
 	    int screen_width;
 	    int screen_height;

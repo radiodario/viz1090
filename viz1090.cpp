@@ -57,7 +57,7 @@ void showHelp(void) {
 "--server <IPv4/hosname>          TCP Beast output listen IPv4 (default: 127.0.0.1)\n"
 "--screensize <width> <height>    Set frame buffer resolution (default: screen resolution)\n"
 "--screenindex <i>                Set the index of the display to use (default: 0)\n"
-"--uiscale <factor>               UI global scaling (default: 1)\n"
+"--uiscale <factor>               Scale everything (default 1; sizes follow the screen height)\n"
 "--hide-cursor                    Hide the mouse pointer (kiosk screens)\n"
 "--no-adsb                        No aircraft: don't connect to dump1090, hide its status\n"
 "--zoom <km>                      Initial map radius in km (default: 25)\n"
@@ -66,7 +66,7 @@ void showHelp(void) {
 "--transit                        Add a TfL departures page (toggle with T or Tab)\n"
 "--transit-loc <lat> <lon>        Location for departures (default: --lat/--lon)\n"
 "--transit-radius <meters>        Walking radius for stops (default: 1000, ~15 min)\n"
-"--transit-scale <factor>         Departures text size vs map text (default: 1.5)\n"
+"--transit-scale <factor>         Departures text size multiplier (default: 1)\n"
 "--transit-start                  Start on the departures page\n"
 "--rotate <seconds>               Rotate pages, the same time each\n"
 "--page-times <map,board,weather> Rotate pages with their own times; weather 'cycle' = one full pass\n"
@@ -117,7 +117,7 @@ int main(int argc, char **argv) {
         } else if (!strcmp(argv[j],"--screenindex")) {
             view.screen_index = atoi(argv[++j]);
         } else if (!strcmp(argv[j],"--uiscale") && more) {
-            view.screen_uiscale = atoi(argv[++j]);
+            view.uiScaleFactor = atof(argv[++j]);
          } else if (!strcmp(argv[j],"--screensize") && more) {
             view.screen_width = atoi(argv[++j]);
             view.screen_height = atoi(argv[++j]);
