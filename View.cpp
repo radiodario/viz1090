@@ -311,8 +311,10 @@ void View::SDL_init() {
     // letting the OS upscale a 1x buffer.
     Uint32 flags = SDL_WINDOW_ALLOW_HIGHDPI;
 
+    // --fullscreen alone keeps the display's current mode; with --screensize
+    // it switches the display to that mode (e.g. 640x480 for a CRT)
     if(fullscreen) {
-        flags = flags | SDL_WINDOW_FULLSCREEN_DESKTOP;
+        flags = flags | (screen_width ? SDL_WINDOW_FULLSCREEN : SDL_WINDOW_FULLSCREEN_DESKTOP);
     }
 
     if(screen_width == 0) {
