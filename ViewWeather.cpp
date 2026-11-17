@@ -431,6 +431,45 @@ static void putTempCentred(SDL_Renderer *r, TTF_Font *font, float t, int cx, int
     putTemp(r, font, t, cx - tempWidth(font, t) / 2, y, color);
 }
 
+int View::cornerTempPad() {
+    return std::max(2, (int)(uiUnit / 3));
+}
+
+// room the corner temperature takes from the right edge (0 while unknown)
+int View::cornerTempWidth() {
+    if(!cornerTempValid || !weatherHeadFont) {
+        return 0;
+    }
+    return tempWidth(weatherHeadFont, cornerTemp) + 3 * cornerTempPad();
+}
+
+// The current temperature, small, in the top-right corner of every page.
+void View::drawCornerTemp() {
+    if(!weather || !weatherHeadFont) {
+        return;
+    }
+    auto now = std::chrono::steady_clock::now();
+    if(now - cornerTempChecked > std::chrono::seconds(10)) {
+        WeatherSnapshot w = weather->snapshot();
+        cornerTempValid = w.valid;
+        cornerTemp = w.temp;
+        cornerTempChecked = now;
+    }
+    if(!cornerTempValid) {
+        return;
+    }
+
+    TTF_Font *font = weatherHeadFont;
+    int pad = cornerTempPad();
+    int w = tempWidth(font, cornerTemp);
+    int h = fontHeight(font);
+    int right = screen_width - pad;
+    int left = right - w - 2 * pad;
+    int top = pad;
+    roundedBoxRGBA(renderer, left, top, right, top + h + pad, pad, 0, 0, 0, 190);
+    putTemp(renderer, font, cornerTemp, left + pad, top + pad / 2, style.white);
+}
+
 //
 // Segments
 //
@@ -608,12 +647,13 @@ void View::drawWeather() {
     int hx = m;
     hx += putText(renderer, clockFont, clockString(nowWall), hx, m, WHITE) + 2 * m;
     putText(renderer, titleFont, SEGMENT_NAMES[weatherSegment], hx, m + headH - fontHeight(titleFont), ORANGE);
+    int headRight = W - m - cornerTempWidth();  // the corner temperature sits top right
     if(weatherSegment == SEG_RADAR) {
-        drawRadarLegend(W - m, m, headH);
+        drawRadarLegend(headRight, m, headH);
     } else {
         char date[32];
         strftime(date, sizeof(date), "%a %d %b", localtime(&nowWall));
-        putText(renderer, weatherBodyFont, date, W - m - textWidth(weatherBodyFont, date), m + headH - fontHeight(weatherBodyFont), GREY);
+        putText(renderer, weatherBodyFont, date, headRight - textWidth(weatherBodyFont, date), m + headH - fontHeight(weatherBodyFont), GREY);
     }
     lineRGBA(renderer, 0, m + headH + m / 2, W, m + headH + m / 2, PANEL_EDGE.r, PANEL_EDGE.g, PANEL_EDGE.b, 255);
 

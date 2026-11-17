@@ -170,6 +170,13 @@ class View {
 		double browsePrevLat, browsePrevLon;
 		std::chrono::steady_clock::time_point browseMovedAt;
 		WeatherData *weather;           // NULL unless --weather is given
+		// the current temperature, small, in the top-right corner of every page
+		void drawCornerTemp();
+		int cornerTempWidth();
+		int cornerTempPad();
+		bool cornerTempValid = false;
+		float cornerTemp = 0;
+		std::chrono::steady_clock::time_point cornerTempChecked;
 		RadarData *radar;               // rain radar (with --weather)
 		bool showRadar;                 // map overlay, toggled with R
 		struct RadarTexture {

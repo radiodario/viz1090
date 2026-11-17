@@ -49,6 +49,7 @@ volatile sig_atomic_t viewNextSegmentRequested = 0;  // SIGUSR2: next weather se
 static const char *SNAPSHOT_PATH = "/tmp/viz1090-snapshot.bmp";
 
 void View::presentFrame() {
+    drawCornerTemp();
     if(viewSnapshotRequested) {
         viewSnapshotRequested = 0;
         SDL_Surface *shot = SDL_CreateRGBSurfaceWithFormat(0, screen_width, screen_height, 32, SDL_PIXELFORMAT_ARGB8888);
