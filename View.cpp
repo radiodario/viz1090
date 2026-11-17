@@ -37,6 +37,7 @@
 
 #include "AircraftLabel.h"
 
+#include <algorithm>
 #include <iostream>
 #include <thread>
 
@@ -345,9 +346,9 @@ void View::SDL_init() {
     screen_height = pixel_height;
     if(point_width > 0 && pixel_width > point_width) {
         pixel_ratio = (pixel_width + point_width / 2) / point_width;
-        if(pixel_ratio < 1) {
-            pixel_ratio = 1;
-        }
+        // a fullscreen window can report its pre-fullscreen size here, which
+        // made the ratio (and the whole UI) enormous; real displays are 1-3x
+        pixel_ratio = std::max(1, std::min(3, pixel_ratio));
         screen_uiscale *= pixel_ratio;
     }
 
@@ -1687,6 +1688,9 @@ void View::drawTransit() {
 // The next few departures in a small panel at the bottom right of the map.
 void View::drawMiniBoard() {
     TTF_Font *font = miniBoardFont ? miniBoardFont : mapFont;
+    if(!font) {
+        return;  // fonts failed to load; drawing text would crash
+    }
     const int ROWS = 4;
     const int PAGE_SECONDS = 8;
 
