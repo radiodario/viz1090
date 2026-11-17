@@ -49,6 +49,7 @@ public:
 
 	std::chrono::high_resolution_clock::time_point touchDownTime;
     int touchx;
+    int mouseDownX, mouseDownY;  // where the button went down, to tell clicks from drags
     int touchy;
     int tapCount;
 };

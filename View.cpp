@@ -1170,8 +1170,10 @@ void View::moveCenterAbsolute(float x, float y) {
 
 // Zoom by factor (<1 zooms in) keeping the point under (x, y) where it is.
 void View::zoomAbout(int x, int y, float factor) {
+    // latLonFromScreenCoords counts y up from the bottom (fine for the
+    // symmetric screen bounds it is mostly used for): flip it for a point
     float lat, lon;
-    latLonFromScreenCoords(&lat, &lon, x, y);
+    latLonFromScreenCoords(&lat, &lon, x, screen_height - y);
     maxDist = std::max(0.001f, std::min(20000.0f, maxDist * factor));
     mapTargetMaxDist = 0;
 
@@ -1308,10 +1310,16 @@ void View::registerClick(int tapcount, int x, int y) {
         Aircraft *selection = NULL;
         int selectionDist = radius2;
 
-        while(p) {
-            if(x && y) {
-                int d = (p->x - x) * (p->x - x) + (p->y - y) * (p->y - y);
-                if(d < selectionDist) {
+        // only planes drawn right now: p->x/p->y go stale for planes that
+        // are faded out, off screen or left over from the planes page
+        while(p && planeFade > 0) {
+            if(x && y && p->lon && p->lat) {
+                float dx, dy;
+                int px, py;
+                pxFromLonLat(&dx, &dy, p->lon, p->lat);
+                screenCoords(&px, &py, dx, dy);
+                int d = (px - x) * (px - x) + (py - y) * (py - y);
+                if(!outOfBounds(px, py) && d < selectionDist) {
                     selection = p;
                     selectionDist = d;
                 }

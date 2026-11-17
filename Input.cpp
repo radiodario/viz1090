@@ -204,11 +204,18 @@ void Input::getInput()
 						tapCount = 0;
 					}
 					touchDownTime = now();
+					mouseDownX = event.button.x;
+					mouseDownY = event.button.y;
 				}
 				break;
 
 			case SDL_MOUSEBUTTONUP:;
 				if(event.button.which != SDL_TOUCH_MOUSEID) {
+					// letting go after a drag isn't a click
+					int moved = abs(event.button.x - mouseDownX) + abs(event.button.y - mouseDownY);
+					if(moved > 4) {
+						break;
+					}
 					touchx = event.button.x * view->pixel_ratio;
 					touchy = event.button.y * view->pixel_ratio;
 					tapCount = event.button.clicks;
@@ -234,6 +241,7 @@ void Input::getInput()
 Input::Input(AppData *appData, View *view) {
 	this->view = view;
 	this->appData = appData;
+	mouseDownX = mouseDownY = 0;
 }
 
 
