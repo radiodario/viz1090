@@ -676,11 +676,10 @@ void View::drawWeather() {
             lines.push_back("Tomorrow " + weatherDescription(w.days[1].code) + ", high " + tempString(w.days[1].tempMax) + "\xC2\xB0" "C");
         }
         lines.push_back("Radar: RainViewer   Forecast: Open-Meteo");
-        std::string text;
-        for(const std::string &l : lines) {
-            text += (text.empty() ? "" : "   \xE2\x80\xA2   ") + upper(l);
+        for(std::string &l : lines) {
+            l = upper(l) + "   \xE2\x80\xA2   ";
         }
-        drawTicker(text, tickerY + m / 2, anim);
+        drawTicker(lines, tickerY + m / 2, anim);
     }
 
     // progress through this segment
@@ -1111,46 +1110,64 @@ void View::drawWeather() {
 // Radar segment: the region around home with the last two hours of radar
 // looping over a plain base map, and a timeline of the frames.
 // A scrolling ticker line, rendered once to a texture and slid along.
-void View::drawTicker(const std::string &text, int y, float anim) {
+void View::drawTicker(const std::vector<std::string> &items, int y, float anim) {
     TTF_Font *font = weatherBodyFont;
     if(!font) {
         return;
     }
-    if(text != tickerText || !tickerTexture) {
-        if(tickerTexture) {
-            SDL_DestroyTexture(tickerTexture);
-            tickerTexture = NULL;
-        }
-        tickerText = text;
-        SDL_Surface *fg = TTF_RenderUTF8_Solid(font, text.c_str(), {255, 255, 255, 255});
-        SDL_Surface *bg = TTF_RenderUTF8_Solid(font, text.c_str(), {0, 0, 0, 255});
-        if(fg && bg) {
-            int off = std::max(1, TTF_FontHeight(font) / 14);
-            SDL_Surface *both = SDL_CreateRGBSurfaceWithFormat(0, fg->w + off, fg->h + off, 32, SDL_PIXELFORMAT_ARGB8888);
-            if(both) {
-                SDL_FillRect(both, NULL, SDL_MapRGBA(both->format, 0, 0, 0, 0));
-                SDL_Rect r = {off, off, bg->w, bg->h};
-                SDL_BlitSurface(bg, NULL, both, &r);
-                SDL_BlitSurface(fg, NULL, both, NULL);
-                tickerTexture = SDL_CreateTextureFromSurface(renderer, both);
-                tickerW = both->w;
-                tickerH = both->h;
-                SDL_FreeSurface(both);
-            }
-        }
-        if(fg) SDL_FreeSurface(fg);
-        if(bg) SDL_FreeSurface(bg);
+    std::string key;
+    for(const std::string &item : items) {
+        key += item + "\n";
     }
-    if(!tickerTexture) {
+    if(key != tickerText) {
+        for(SDL_Texture *t : tickerTextures) {
+            SDL_DestroyTexture(t);
+        }
+        tickerTextures.clear();
+        tickerWidths.clear();
+        tickerText = key;
+        int off = std::max(1, TTF_FontHeight(font) / 14);
+        for(const std::string &item : items) {
+            // white text with a dark drop shadow
+            SDL_Surface *fg = TTF_RenderUTF8_Solid(font, item.c_str(), {255, 255, 255, 255});
+            SDL_Surface *bg = TTF_RenderUTF8_Solid(font, item.c_str(), {0, 0, 0, 255});
+            if(fg && bg) {
+                SDL_Surface *both = SDL_CreateRGBSurfaceWithFormat(0, fg->w + off, fg->h + off, 32, SDL_PIXELFORMAT_ARGB8888);
+                if(both) {
+                    SDL_FillRect(both, NULL, SDL_MapRGBA(both->format, 0, 0, 0, 0));
+                    SDL_Rect r = {off, off, bg->w, bg->h};
+                    SDL_BlitSurface(bg, NULL, both, &r);
+                    SDL_BlitSurface(fg, NULL, both, NULL);
+                    SDL_Texture *t = SDL_CreateTextureFromSurface(renderer, both);
+                    if(t) {
+                        tickerTextures.push_back(t);
+                        tickerWidths.push_back(both->w);
+                        tickerH = both->h;
+                    }
+                    SDL_FreeSurface(both);
+                }
+            }
+            if(fg) SDL_FreeSurface(fg);
+            if(bg) SDL_FreeSurface(bg);
+        }
+    }
+    int span = 0;
+    for(int w : tickerWidths) {
+        span += w;
+    }
+    if(span <= 0) {
         return;
     }
-    int gap = textWidth(font, "      ");
     float speed = screen_width / 9.0f;  // crosses the screen in ~9 s
-    int span = tickerW + gap;
     int x = -(int)fmodf(anim * speed, (float)span);
-    for(; x < screen_width; x += span) {
-        SDL_Rect dest = {x, y, tickerW, tickerH};
-        SDL_RenderCopy(renderer, tickerTexture, NULL, &dest);
+    while(x < screen_width) {
+        for(size_t i = 0; i < tickerTextures.size() && x < screen_width; i++) {
+            if(x + tickerWidths[i] > 0) {
+                SDL_Rect dest = {x, y, tickerWidths[i], tickerH};
+                SDL_RenderCopy(renderer, tickerTextures[i], NULL, &dest);
+            }
+            x += tickerWidths[i];
+        }
     }
 }
 

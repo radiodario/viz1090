@@ -192,13 +192,16 @@ class View {
 		void drawWeatherRadar(int top, int bottom);  // radar segment of the weather page
 		void drawRadarLegend(int right, int top, int height);
 		void drawWeatherRegional(const WeatherSnapshot &w, int top, int bottom, float anim);
-		void drawTicker(const std::string &text, int y, float anim);
+		void drawTicker(const std::vector<std::string> &items, int y, float anim);
 		void drawBackdrop(int slot, SDL_Color color);  // cached base map for regional (0) / radar (1)
 		SDL_Texture *backdropTexture[2];
 		int backdropLoaded[2];
-		SDL_Texture *tickerTexture;
+		// one texture per item: the whole line can be wider than the
+		// Pi's 2048-pixel texture limit
+		std::vector<SDL_Texture *> tickerTextures;
+		std::vector<int> tickerWidths;
 		std::string tickerText;
-		int tickerW, tickerH;
+		int tickerH;
 		TTF_Font *weatherTitleFont;     // segment titles
 		int weatherSegment;              // which rotating segment is showing
 		std::chrono::steady_clock::time_point weatherSegmentShown;

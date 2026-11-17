@@ -2939,10 +2939,8 @@ View::View(AppData *appData){
     weatherHugeFont         = NULL;
     weatherBodyFont         = NULL;
     weatherTitleFont        = NULL;
-    tickerTexture           = NULL;
     backdropTexture[0] = backdropTexture[1] = NULL;
     backdropLoaded[0] = backdropLoaded[1] = -1;
-    tickerW                 = 0;
     tickerH                 = 0;
     weatherSegment          = 0;
     weatherSegmentShown     = std::chrono::steady_clock::now();
