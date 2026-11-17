@@ -450,7 +450,20 @@ struct ForecastPeriod {
     bool night;
 };
 
-static std::string forecastSentence(const WeatherSnapshot &w, const ForecastPeriod &p) {
+// A forecast period boiled down to what the page shows
+struct ForecastSummary {
+    std::string name;
+    bool night;
+    int code;          // most notable weather in the period
+    float temp;        // high by day, low at night
+    int rainProb;      // %, max over the period
+    float rainMm;
+    int windLo, windHi;
+    std::string windDir;
+    std::string trend; // e.g. "Drying out later", or empty
+};
+
+static bool summarise(const WeatherSnapshot &w, const ForecastPeriod &p, ForecastSummary *out) {
     std::vector<const WeatherSlot *> slots;
     for(const WeatherSlot &s : w.hours) {
         if(s.time >= p.start && s.time < p.end) {
@@ -458,43 +471,50 @@ static std::string forecastSentence(const WeatherSnapshot &w, const ForecastPeri
         }
     }
     if(slots.empty()) {
-        return "";
+        return false;
     }
-    int code = 0, prob = 0;
-    float tMin = 1e9f, tMax = -1e9f, wMin = 1e9f, wMax = 0, rain = 0;
-    int windDir = 0;
+    ForecastSummary f;
+    f.name = p.name;
+    f.night = p.night;
+    f.code = 0;
+    f.rainProb = 0;
+    f.rainMm = 0;
+    float tMin = 1e9f, tMax = -1e9f, wMin = 1e9f, wMax = 0;
+    int windDeg = 0;
     for(const WeatherSlot *s : slots) {
-        code = std::max(code, s->code);  // higher WMO codes are the more notable weather
-        prob = std::max(prob, s->precipProb);
+        f.code = std::max(f.code, s->code);  // higher WMO codes are the more notable weather
+        f.rainProb = std::max(f.rainProb, s->precipProb);
+        f.rainMm += s->precip;
         tMin = std::min(tMin, s->temp);
         tMax = std::max(tMax, s->temp);
         wMin = std::min(wMin, s->windMph);
         if(s->windMph >= wMax) {
             wMax = s->windMph;
-            windDir = s->windDir;
+            windDeg = s->windDir;
         }
-        rain += s->precip;
     }
+    f.temp = p.night ? tMin : tMax;
     auto round5 = [](float v) { return std::max(5, (int)lroundf(v / 5.0f) * 5); };
-    const char *names[] = {"N", "NE", "E", "SE", "S", "SW", "W", "NW"};
-    std::string dir = names[((windDir + 22) / 45) % 8];
+    f.windLo = round5(wMin);
+    f.windHi = round5(wMax);
+    f.windDir = compass(windDeg);
 
-    std::string out = weatherDescription(code) + ". ";
-    out += std::string(p.night ? "Low around " : "High around ") + std::to_string((int)lroundf(p.night ? tMin : tMax)) + "\xC2\xB0" "C. ";
-    int a = round5(wMin), b = round5(wMax);
-    out += "Winds " + dir + (a == b ? " around " + std::to_string(a) : " at " + std::to_string(a) + " to " + std::to_string(b)) + " mph. ";
-    if(prob >= 20) {
-        out += "Chance of rain " + std::to_string(prob) + "%. ";
-        if(rain >= 0.5f) {
-            out += "Rainfall around " + std::to_string((int)lroundf(rain)) + " mm.";
-        }
-    } else {
-        out += "Staying dry.";
+    // does the rain come or go during the period?
+    size_t half = slots.size() / 2;
+    int early = 0, late = 0;
+    for(size_t i = 0; i < slots.size(); i++) {
+        (i < half ? early : late) = std::max(i < half ? early : late, slots[i]->precipProb);
     }
-    return out;
+    if(slots.size() >= 4 && early >= 50 && late < 25) {
+        f.trend = "Drying out later";
+    } else if(slots.size() >= 4 && early < 25 && late >= 50) {
+        f.trend = "Rain arriving later";
+    }
+    *out = f;
+    return true;
 }
 
-static std::vector<std::pair<std::string, std::string>> forecastText(const WeatherSnapshot &w, time_t now) {
+static std::vector<ForecastSummary> forecastPeriods(const WeatherSnapshot &w, time_t now) {
     struct tm lt = *localtime(&now);
     auto at = [&](int dayOffset, int hour) {
         struct tm t = lt;
@@ -516,11 +536,11 @@ static std::vector<std::pair<std::string, std::string>> forecastText(const Weath
         periods.push_back({base ? "Tomorrow" : "Today", at(base, 6), at(base, 18), false});
         periods.push_back({base ? "Tomorrow night" : "Tonight", at(base, 18), at(base + 1, 6), true});
     }
-    std::vector<std::pair<std::string, std::string>> out;
+    std::vector<ForecastSummary> out;
     for(const ForecastPeriod &p : periods) {
-        std::string text = forecastSentence(w, p);
-        if(!text.empty()) {
-            out.push_back(std::make_pair(p.name, text));
+        ForecastSummary f;
+        if(summarise(w, p, &f)) {
+            out.push_back(f);
         }
     }
     return out;
@@ -685,39 +705,46 @@ void View::drawWeather() {
     }
 
     case SEG_TEXT: {
-        // written forecast for the next few periods, word-wrapped
-        int y = area.y;
-        int lineH = fontHeight(weatherBodyFont);
-        for(const auto &para : forecastText(w, nowWall)) {
-            std::string text = upper(para.first) + "... " + upper(para.second);
-            std::string line;
-            std::vector<std::string> words;
-            size_t pos = 0;
-            while(pos < text.size()) {
-                size_t sp = text.find(' ', pos);
-                if(sp == std::string::npos) {
-                    sp = text.size();
-                }
-                words.push_back(text.substr(pos, sp - pos));
-                pos = sp + 1;
+        // the next three periods side by side: what, how warm, rain, wind
+        std::vector<ForecastSummary> periods = forecastPeriods(w, nowWall);
+        if(periods.empty()) {
+            break;
+        }
+        int cols = (int)periods.size();
+        int colW = area.w / cols;
+        int textBlock = fontHeight(weatherHeadFont) + fontHeight(weatherBodyFont) + fontHeight(weatherBigFont) +
+                        fontHeight(weatherHeadFont) + m + 2 * fontHeight(weatherBodyFont);
+        int glyphPx = std::max(1, std::min(colW / 24, (area.h - textBlock - 3 * m) / 22));
+        int blockH = textBlock + 22 * glyphPx + 2 * m;
+        int top = area.y + std::max(0, (area.h - blockH) / 2);
+        for(int i = 0; i < cols; i++) {
+            const ForecastSummary &f = periods[i];
+            int cx = area.x + colW * i + colW / 2;
+            int y = top;
+            putCentred(renderer, weatherHeadFont, f.name, cx, y, WHITE);
+            y += fontHeight(weatherHeadFont) + m;
+            drawWeatherGlyph(f.code, !f.night, cx, y + 11 * glyphPx, glyphPx, anim);
+            y += 22 * glyphPx + m;
+            putCentred(renderer, weatherBodyFont, weatherDescription(f.code), cx, y, ORANGE);
+            y += fontHeight(weatherBodyFont);
+            int labelW = textWidth(weatherHeadFont, f.night ? "Low " : "High ");
+            int tw = labelW + tempWidth(weatherBigFont, f.temp);
+            int tx = cx - tw / 2;
+            putText(renderer, weatherHeadFont, f.night ? "Low" : "High", tx, y + fontHeight(weatherBigFont) - fontHeight(weatherHeadFont) - m / 2, GREY);
+            putTemp(renderer, weatherBigFont, f.temp, tx + labelW, y, WHITE);
+            y += fontHeight(weatherBigFont);
+            std::string rain = f.rainProb >= 20 ? "Rain " + std::to_string(f.rainProb) + "%" : "Dry";
+            if(f.rainProb >= 20 && f.rainMm >= 0.5f) {
+                rain += ", " + std::to_string((int)lroundf(f.rainMm)) + " mm";
             }
-            for(size_t i = 0; i < words.size(); i++) {
-                std::string candidate = line.empty() ? words[i] : line + " " + words[i];
-                if(textWidth(weatherBodyFont, candidate) > area.w && !line.empty()) {
-                    putText(renderer, weatherBodyFont, line, area.x, y, WHITE);
-                    y += lineH;
-                    line = words[i];
-                } else {
-                    line = candidate;
-                }
-            }
-            if(!line.empty()) {
-                putText(renderer, weatherBodyFont, line, area.x, y, WHITE);
-                y += lineH;
-            }
-            y += lineH / 2;
-            if(y > area.y + area.h - lineH) {
-                break;
+            putCentred(renderer, weatherBodyFont, rain, cx, y, TEAL);
+            y += fontHeight(weatherBodyFont);
+            std::string wind = "Wind " + f.windDir + " " + std::to_string(f.windLo) +
+                               (f.windHi != f.windLo ? "-" + std::to_string(f.windHi) : "") + " mph";
+            putCentred(renderer, weatherBodyFont, wind, cx, y, GREY);
+            y += fontHeight(weatherBodyFont);
+            if(!f.trend.empty()) {
+                putCentred(renderer, weatherTextFont, f.trend, cx, y + m / 2, WHITE);
             }
         }
         break;
@@ -843,58 +870,107 @@ void View::drawWeather() {
     }
 
     case SEG_48H: {
+        // temperature line over chance-of-rain bars, nights shaded,
+        // with clock times and day names along the bottom
         if(w.hours.empty()) {
             break;
         }
-        int labelW = textWidth(weatherBodyFont, "-88") + 2 * m;
-        int gx0 = area.x + labelW;
-        int gx1 = area.x + area.w;
-        int gy0 = area.y + m;
-        int gy1 = area.y + area.h - fontHeight(weatherBodyFont) - m;
-        float tMin = 1e9f, tMax = -1e9f;
-        for(const WeatherSlot &s : w.hours) {
-            tMin = std::min(tMin, s.temp);
-            tMax = std::max(tMax, s.temp);
-        }
-        if(tMax - tMin < 4) {
-            tMax += 2;
-            tMin -= 2;
-        }
         int n = (int)w.hours.size();
+        int bodyH = fontHeight(weatherBodyFont);
+        int textH = fontHeight(weatherTextFont);
+
+        // legend
+        int lx = area.x;
+        int ly = area.y;
+        int sw = bodyH * 3 / 2;
+        thickLineRGBA(renderer, lx, ly + bodyH / 2, lx + sw, ly + bodyH / 2, std::max(2, H / 300), 255, 255, 255, 255);
+        lx += sw + m / 2;
+        lx += putText(renderer, weatherBodyFont, "Temperature", lx, ly, WHITE) + 2 * m;
+        boxRGBA(renderer, lx, ly + bodyH / 4, lx + sw, ly + bodyH * 3 / 4, 24, 110, 96, 255);
+        lx += sw + m / 2;
+        lx += putText(renderer, weatherBodyFont, "Chance of rain", lx, ly, TEAL) + 2 * m;
+        boxRGBA(renderer, lx, ly + bodyH / 4, lx + sw, ly + bodyH * 3 / 4, 30, 30, 38, 255);
+        lx += sw + m / 2;
+        putText(renderer, weatherBodyFont, "Night", lx, ly, GREY);
+
+        int scaleW = textWidth(weatherTextFont, "100%") + m;
+        int gx0 = area.x;
+        int gx1 = area.x + area.w - scaleW;
+        int gy0 = area.y + bodyH + 2 * m + textH;   // room for the temperature labels
+        int gy1 = area.y + area.h - 2 * textH - m;  // room for times and days
+        float tMin = 1e9f, tMax = -1e9f;
+        int iMin = 0, iMax = 0;
+        for(int i = 0; i < n; i++) {
+            if(w.hours[i].temp < tMin) { tMin = w.hours[i].temp; iMin = i; }
+            if(w.hours[i].temp > tMax) { tMax = w.hours[i].temp; iMax = i; }
+        }
+        float lo = tMin - 1, hi = tMax + 1;
+        if(hi - lo < 6) {
+            float mid = (hi + lo) / 2;
+            lo = mid - 3;
+            hi = mid + 3;
+        }
         auto xAt = [&](int i) { return gx0 + (gx1 - gx0) * i / std::max(1, n - 1); };
-        auto yAt = [&](float t) { return gy1 - (int)((gy1 - gy0) * (t - tMin) / (tMax - tMin)); };
+        auto yAt = [&](float t) { return gy1 - (int)((gy1 - gy0) * (t - lo) / (hi - lo)); };
 
         for(int i = 0; i < n - 1; i++) {
             if(!w.hours[i].isDay) {
-                boxRGBA(renderer, xAt(i), gy0, xAt(i + 1), gy1, 18, 18, 22, 255);
+                boxRGBA(renderer, xAt(i), gy0, xAt(i + 1), gy1, 30, 30, 38, 255);
             }
         }
+        // rain scale on the right
+        for(int pct = 0; pct <= 100; pct += 50) {
+            int y = gy1 - (gy1 - gy0) * pct / 100;
+            lineRGBA(renderer, gx0, y, gx1, y, PANEL_EDGE.r, PANEL_EDGE.g, PANEL_EDGE.b, 255);
+            putText(renderer, weatherTextFont, std::to_string(pct) + "%", gx1 + m / 2, y - textH / 2, TEAL);
+        }
+        int bw = std::max(1, (gx1 - gx0) / n - 1);
         for(int i = 0; i < n; i++) {
             if(w.hours[i].precipProb > 0) {
                 int bh = (gy1 - gy0) * w.hours[i].precipProb / 100;
-                int bw = std::max(1, (gx1 - gx0) / n - 1);
-                boxRGBA(renderer, xAt(i), gy1 - bh, xAt(i) + bw, gy1, 24, 70, 62, 255);
-            }
-        }
-        if(n > 24) {
-            int x24 = xAt(24);
-            for(int y = gy0; y < gy1; y += 6) {
-                lineRGBA(renderer, x24, y, x24, std::min(gy1, y + 3), GREY.r, GREY.g, GREY.b, 255);
+                boxRGBA(renderer, xAt(i), gy1 - bh, xAt(i) + bw, gy1, 24, 110, 96, 255);
             }
         }
         int width = std::max(2, H / 300);
         for(int i = 1; i < n; i++) {
             thickLineRGBA(renderer, xAt(i - 1), yAt(w.hours[i - 1].temp), xAt(i), yAt(w.hours[i].temp), width, 255, 255, 255, 255);
         }
-        putTemp(renderer, weatherBodyFont, tMax, area.x, gy0 - fontHeight(weatherBodyFont) / 2, GREY);
-        putTemp(renderer, weatherBodyFont, tMin, area.x, gy1 - fontHeight(weatherBodyFont) / 2, GREY);
-        const char *marks[] = {"Now", "+12h", "+24h", "+36h", "+48h"};
-        for(int k = 0; k < 5; k++) {
-            int i = std::min(n - 1, k * 12);
-            int x = xAt(i) - textWidth(weatherBodyFont, marks[k]) / 2;
-            x = std::max(gx0, std::min(gx1 - textWidth(weatherBodyFont, marks[k]), x));
-            putText(renderer, weatherBodyFont, marks[k], x, gy1 + m / 2, GREY);
+
+        // label the warmest and coldest points on the line, plus now
+        auto mark = [&](int i, bool above) {
+            int x = xAt(i), y = yAt(w.hours[i].temp);
+            filledCircleRGBA(renderer, x, y, width * 2, 255, 255, 255, 255);
+            int tw = tempWidth(weatherTextFont, w.hours[i].temp);
+            int tx = std::max(gx0, std::min(gx1 - tw, x - tw / 2));
+            int ty = above ? y - textH - width * 2 : y + width * 2;
+            putTemp(renderer, weatherTextFont, w.hours[i].temp, tx, ty, WHITE);
+        };
+        mark(0, w.hours[0].temp >= (tMin + tMax) / 2);
+        if(iMax > 2) mark(iMax, true);
+        if(iMin > 2 && iMin != iMax) mark(iMin, false);
+
+        // times every 6 hours; day names at midnight
+        for(int i = 0; i < n; i++) {
+            struct tm lt = *localtime(&w.hours[i].time);
+            if(lt.tm_hour % 6 != 0 || i == 0) {
+                continue;
+            }
+            int x = xAt(i);
+            lineRGBA(renderer, x, gy1, x, gy1 + m / 2, GREY.r, GREY.g, GREY.b, 255);
+            char hh[8];
+            strftime(hh, sizeof(hh), "%H:%M", &lt);
+            int tw = textWidth(weatherTextFont, hh);
+            if(x - tw / 2 >= gx0 && x + tw / 2 <= gx1 + scaleW) {
+                putText(renderer, weatherTextFont, hh, x - tw / 2, gy1 + m / 2, GREY);
+            }
+            if(lt.tm_hour == 0) {
+                char day[16];
+                strftime(day, sizeof(day), "%A", &lt);
+                lineRGBA(renderer, x, gy0, x, gy1, GREY.r, GREY.g, GREY.b, 255);
+                putText(renderer, weatherTextFont, day, std::min(x + m / 2, gx1 - textWidth(weatherTextFont, day)), gy1 + m / 2 + textH, WHITE);
+            }
         }
+        putText(renderer, weatherTextFont, "Now", gx0, gy1 + m / 2, WHITE);
         break;
     }
 

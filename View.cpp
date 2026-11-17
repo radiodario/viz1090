@@ -2498,7 +2498,7 @@ View::View(AppData *appData){
     transit                 = NULL;
     weather                 = NULL;
     radar                   = NULL;
-    showRadar               = true;
+    showRadar               = false;  // R shows rain over the map
     weatherBigFont          = NULL;
     weatherHugeFont         = NULL;
     weatherBodyFont         = NULL;
