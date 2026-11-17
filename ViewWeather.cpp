@@ -851,7 +851,7 @@ void View::drawWeather() {
         int cols = 6;
         int colW = area.w / cols;
         int rowH = area.h / 2;
-        int labels = fontHeight(weatherTextFont) * 2 + fontHeight(weatherHeadFont);
+        int labels = fontHeight(weatherTextFont) * 3 + fontHeight(weatherHeadFont);
         int glyphPx = std::max(1, std::min(colW / 18, (rowH - labels) / 20));
         int cellH = labels + 19 * glyphPx;
         for(int i = 0; i < 12 && start + i < w.hours.size(); i++) {
@@ -865,6 +865,8 @@ void View::drawWeather() {
             if(s.precipProb >= 0) {
                 putCentred(renderer, weatherTextFont, std::to_string(s.precipProb) + "%", cx, ty + fontHeight(weatherHeadFont), TEAL);
             }
+            putCentred(renderer, weatherTextFont, compass(s.windDir) + " " + std::to_string((int)lroundf(s.windMph)) + " mph",
+                       cx, ty + fontHeight(weatherHeadFont) + fontHeight(weatherTextFont), GREY);
         }
         break;
     }
@@ -977,7 +979,8 @@ void View::drawWeather() {
     case SEG_WEEK: {
         int cols = std::max(1, (int)w.days.size());
         int colW = area.w / cols;
-        int textBlock = fontHeight(weatherHeadFont) + fontHeight(weatherTextFont) + fontHeight(weatherBigFont) + fontHeight(weatherHeadFont) + fontHeight(weatherBodyFont);
+        int textBlock = fontHeight(weatherHeadFont) + fontHeight(weatherTextFont) + fontHeight(weatherBigFont) + fontHeight(weatherHeadFont) +
+                        fontHeight(weatherBodyFont) + fontHeight(weatherTextFont);
         int glyphPx = std::max(1, std::min(colW / 19, (area.h - textBlock - 2 * m) / 22));
         int blockH = textBlock + 22 * glyphPx;
         int top = area.y + std::max(0, (area.h - blockH) / 2);
@@ -1000,6 +1003,8 @@ void View::drawWeather() {
             if(d.precipProb >= 0) {
                 putCentred(renderer, weatherBodyFont, std::to_string(d.precipProb) + "%", cx, ty, TEAL);
             }
+            ty += fontHeight(weatherBodyFont);
+            putCentred(renderer, weatherTextFont, compass(d.windDir) + " " + std::to_string((int)lroundf(d.windMph)), cx, ty, GREY);
         }
         break;
     }

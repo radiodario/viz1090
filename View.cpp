@@ -1061,7 +1061,9 @@ void View::drawPlanes() {
                         drawPlaneIcon(usex, usey, useHeading, planeColor);
                     }
 
-                    drawPlaneText(p);            
+                    if(p->altitude > 0) {
+                        drawPlaneText(p);  // planes on the ground (altitude 0) go unlabelled
+                    }
                 }
             } else {
                 circleRGBA(renderer, x, y, 8 * (1000 * DISPLAY_ACTIVE - elapsed(p->msSeen)) / 500, style.planeGoneColor.r, style.planeGoneColor.g, style.planeGoneColor.b, 255);
@@ -1475,7 +1477,7 @@ void View::fitHomeToStops() {
     TTF_Font *boardFont = miniBoardFont ? miniBoardFont : mapFont;
     if(miniBoard && boardFont) {
         int pad = PAD * pixel_ratio;
-        boardH = 4 * (TTF_FontHeight(boardFont) + pad / 2) + 3 * pad;
+        boardH = 4 * (TTF_FontHeight(boardFont) + pad / 2) + 3 * pad + messageFontHeight + 2 * PAD;
     }
     int usableH = std::max(screen_height / 2, screen_height - boardH);
 
@@ -1488,6 +1490,10 @@ void View::fitHomeToStops() {
     // centre the stops in the area above the board: move the view's centre down
     float kmPerPx = 2.0f * dist / longSide;
     lat -= boardH / 2.0f * kmPerPx / 111.195f;
+    // and a touch further south and west, so the stops at the bottom of
+    // the street sit clear of the edge
+    lat -= 0.06f * screen_height * kmPerPx / 111.195f;
+    lon -= 0.04f * screen_width * kmPerPx / (111.195f * cosf(lat * (float)M_PI / 180.0f));
     homeLat = lat;
     homeLon = lon;
     homeDist = dist;
@@ -1860,8 +1866,9 @@ void View::drawMiniBoard() {
     const int numChars = 3, badgeChars = 5, destChars = 18, stopChars = 3, minsChars = 7;
     int boxW = (numChars + badgeChars + destChars + stopChars + minsChars + 4) * charW + 2 * pad;
     int boxH = ROWS * rowH + 2 * pad;
-    int left = screen_width - boxW - pad;
-    int top = screen_height - boxH - pad;
+    // bottom left, above the status boxes: the stops sit to the south-east of home
+    int left = pad;
+    int top = screen_height - messageFontHeight - 2 * PAD - boxH - pad;
 
     roundedBoxRGBA(renderer, left, top, left + boxW, top + boxH, ROUND_RADIUS, 0, 0, 0, 220);
     roundedRectangleRGBA(renderer, left, top, left + boxW, top + boxH, ROUND_RADIUS, style.grey_dark.r, style.grey_dark.g, style.grey_dark.b, 255);

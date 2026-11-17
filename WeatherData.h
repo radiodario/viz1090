@@ -40,6 +40,8 @@ struct WeatherDay {
     int precipProb;
     time_t sunrise;
     time_t sunset;
+    float windMph = 0;    // strongest of the day
+    int windDir = 0;      // dominant direction, degrees
 };
 
 struct WeatherSnapshot {

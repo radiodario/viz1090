@@ -102,7 +102,7 @@ bool WeatherData::fetch() {
              "&current=temperature_2m,apparent_temperature,weather_code,wind_speed_10m,wind_direction_10m,relative_humidity_2m,is_day,dew_point_2m,pressure_msl,visibility,cloud_cover"
              "&minutely_15=precipitation,weather_code,temperature_2m,is_day&forecast_minutely_15=4"
              "&hourly=temperature_2m,precipitation_probability,precipitation,weather_code,is_day,wind_speed_10m,wind_direction_10m&forecast_hours=48"
-             "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunrise,sunset&forecast_days=7"
+             "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunrise,sunset,wind_speed_10m_max,wind_direction_10m_dominant&forecast_days=7"
              "&timezone=auto&wind_speed_unit=mph",
              lat, lon);
 
@@ -187,6 +187,8 @@ bool WeatherData::fetch() {
             day.precipProb = (int)num(d["precipitation_probability_max"], i, -1);
             day.sunrise = d.contains("sunrise") && d["sunrise"][i].is_string() ? parseLocalTime(d["sunrise"][i].get<std::string>()) : 0;
             day.sunset = d.contains("sunset") && d["sunset"][i].is_string() ? parseLocalTime(d["sunset"][i].get<std::string>()) : 0;
+            day.windMph = d.contains("wind_speed_10m_max") ? num(d["wind_speed_10m_max"], i, 0) : 0;
+            day.windDir = d.contains("wind_direction_10m_dominant") ? (int)num(d["wind_direction_10m_dominant"], i, 0) : 0;
             w.days.push_back(day);
         }
     } catch(const std::exception &e) {
