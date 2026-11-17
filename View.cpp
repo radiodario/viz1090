@@ -1377,6 +1377,7 @@ void View::draw() {
         return;
     }
 
+    fitHomeToStops();
     if(flying) {
         updateFlight();
     } else {
@@ -1437,6 +1438,48 @@ void View::rememberHome() {
     homeLat = centerLat;
     homeLon = centerLon;
     homeDist = maxDist;
+}
+
+// Frame the local map around home and every stop within a 10-minute walk,
+// so e.g. the stops at the end of the street are on screen. (All 15
+// minutes' worth would zoom out ~2x.) Runs once, when walking times are in;
+// --zoom is the closest it will go.
+static const int FRAME_WALK_MINUTES = 10;
+
+void View::fitHomeToStops() {
+    if(homeFitted || !transit) {
+        return;
+    }
+    std::vector<StopMarker> stops = transit->stopMarkers();
+    double latMin = homeLat, latMax = homeLat, lonMin = homeLon, lonMax = homeLon;
+    int used = 0;
+    for(const StopMarker &m : stops) {
+        if(m.walkMinutes <= 0 || m.walkMinutes > FRAME_WALK_MINUTES) {
+            continue;  // not timed yet, or too far to be worth zooming out for
+        }
+        latMin = std::min(latMin, m.lat);
+        latMax = std::max(latMax, m.lat);
+        lonMin = std::min(lonMin, m.lon);
+        lonMax = std::max(lonMax, m.lon);
+        used++;
+    }
+    if(used == 0) {
+        return;  // not loaded yet
+    }
+    homeFitted = true;
+    float lat = (float)((latMin + latMax) / 2);
+    float lon = (float)((lonMin + lonMax) / 2);
+    // maxDist is half the longer screen side in km; leave room for labels
+    double halfH = (latMax - latMin) / 2 * 111.195;
+    double halfW = (lonMax - lonMin) / 2 * 111.195 * cos(lat * M_PI / 180.0);
+    float longSide = std::max(screen_width, screen_height);
+    float dist = (float)std::max(halfW * longSide / screen_width, halfH * longSide / screen_height) * 1.15f;
+    homeLat = lat;
+    homeLon = lon;
+    homeDist = std::max(homeDist, dist);
+    if(page == PAGE_MAP && !flying) {
+        flyTo(homeLat, homeLon, homeDist, 1.5f);
+    }
 }
 
 void View::flyTo(float lat, float lon, float dist, float seconds) {
@@ -2602,6 +2645,7 @@ View::View(AppData *appData){
     }
     planeFeed               = false;
     flying                  = false;
+    homeFitted              = false;
     flySeconds              = 1;
     homeLat = homeLon = 0;
     homeDist = 1;

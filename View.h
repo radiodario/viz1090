@@ -141,6 +141,8 @@ class View {
 		float homeLat, homeLon, homeDist;
 		float planesLat, planesLon, planesDist;
 		void rememberHome();
+		bool homeFitted;                // home view widened to take in the nearby stops
+		void fitHomeToStops();
 		// a timed camera move between two views (zoom in log space)
 		bool flying;
 		std::chrono::steady_clock::time_point flyStart;
