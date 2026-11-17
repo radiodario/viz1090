@@ -1249,7 +1249,10 @@ void View::drawWeatherRadar(int top, int bottom) {
         boxRGBA(renderer, x - 1, barY - h, x + 1, barY, c.r, c.g, c.b, 255);
     }
     int cxCur = x0 + (x1 - x0) * current / std::max(1, (int)frames.size() - 1);
-    std::string label = clockString(frames[current].time);
+    // "Latest 08:40", or how long ago the frame is: "40 min ago"
+    long ago = (long)(time(NULL) - frames[current].time) / 60;
+    std::string label = current == (int)frames.size() - 1 ? "Latest " + clockString(frames[current].time)
+                                                          : std::to_string(ago) + " min ago";
     int lw = textWidth(weatherBodyFont, label);
     putText(renderer, weatherBodyFont, label, std::max(x0, std::min(x1 - lw, cxCur - lw / 2)), barY + m / 2, WHITE);
 }

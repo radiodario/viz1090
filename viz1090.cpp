@@ -31,6 +31,7 @@
 
 #include "AppData.h"
 #include "View.h"
+#include "AdsbApi.h"
 #include "Input.h"
 #include <cstring> 
 int go = 1;
@@ -69,7 +70,8 @@ void showHelp(void) {
 "--transit-scale <factor>         Departures text size multiplier (default: 1)\n"
 "--transit-start                  Start on the departures page\n"
 "--rotate <seconds>               Rotate pages, the same time each\n"
-"--page-times <map,board,weather> Rotate pages with their own times; weather 'cycle' = one full pass\n"
+"--page-times <map,board,weather[,planes]> Rotate pages with their own times; weather 'cycle' = one full pass\n"
+"--adsb-api [url]                 Planes from an online feed (default https://api.adsb.lol)\n"
     );
 }
 
@@ -90,6 +92,8 @@ int main(int argc, char **argv) {
     bool weatherEnabled = false;
     bool weatherStart = false;
     bool transitEnabled = false;
+    std::string adsbApiUrl;   // --adsb-api: planes from an online aggregator
+    AdsbApi adsbApi;
     bool transitStart = false;
     double transitLat = 0, transitLon = 0;
     int transitRadius = 1000;
@@ -148,7 +152,8 @@ int main(int argc, char **argv) {
             transitEnabled = true;
             transitStart = true;
         } else if (!strcmp(argv[j],"--page-times") && more) {
-            // e.g. 60,30,cycle: map 60 s, departures 30 s, one full weather cycle
+            // e.g. 60,30,cycle,30: map 60 s, departures 30 s, one full weather
+            // cycle, London planes 30 s (the default when left out)
             transitEnabled = true;
             weatherEnabled = true;
             view.usePageTimes = true;
@@ -156,8 +161,15 @@ int main(int argc, char **argv) {
             strncpy(spec, argv[++j], sizeof(spec) - 1);
             spec[sizeof(spec) - 1] = 0;
             int i = 0;
-            for(char *tok = strtok(spec, ","); tok && i < 3; tok = strtok(NULL, ","), i++) {
+            for(char *tok = strtok(spec, ","); tok && i < View::PAGE_COUNT; tok = strtok(NULL, ","), i++) {
                 view.pageSeconds[i] = strcmp(tok, "cycle") == 0 ? 0 : atof(tok);
+            }
+        } else if (!strcmp(argv[j],"--adsb-api")) {
+            // optional base URL; adsb.lol by default
+            if(more && argv[j + 1][0] != '-') {
+                adsbApiUrl = argv[++j];
+            } else {
+                adsbApiUrl = "https://api.adsb.lol";
             }
         } else if (!strcmp(argv[j],"--rotate") && more) {
             transitEnabled = true;
@@ -208,6 +220,13 @@ int main(int argc, char **argv) {
         }
     }
 
+    if(!adsbApiUrl.empty()) {
+        // the London-wide planes page's area, with some margin
+        adsbApi.start(adsbApiUrl, view.planesLat, view.planesLon, 22);  // nm: the screen's corners
+        view.planeFeed = true;
+    }
+    view.rememberHome();  // the local view the rotation returns to
+
     Input input(&appData,&view);
 
     view.weatherSegmentShown = std::chrono::steady_clock::now();  // rotation starts with the first frame
@@ -224,6 +243,13 @@ int main(int argc, char **argv) {
     {
         input.getInput();
         view.draw();
+        if(view.planeFeed) {
+            std::vector<ApiAircraft> batch;
+            if(adsbApi.take(&batch)) {
+                appData.aircraftList.update(batch);
+                appData.updateStatus();
+            }
+        }
         if(!view.noAdsb) {
             appData.connect();
             appData.update();

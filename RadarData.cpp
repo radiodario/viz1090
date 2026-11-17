@@ -147,7 +147,7 @@ bool RadarData::downloadNext() {
                 ++it;
             }
         }
-        for(auto f = frameList.rbegin(); f != frameList.rend() && url.empty(); ++f) {
+        for(auto f = frameList.rbegin(); f != frameList.rend() && url.empty() && frameList.back().time - f->time <= 3600; ++f) {
             for(const auto &w : wanted) {
                 int z, x, y;
                 if(sscanf(w.first.c_str(), "%d/%d/%d", &z, &x, &y) != 3) {
@@ -183,9 +183,21 @@ bool RadarData::downloadNext() {
     return true;
 }
 
+// The last hour only: RainViewer keeps two hours of history (and no longer
+// offers a forecast), but an hour reads better and halves the tiles to fetch.
 std::vector<RadarFrameInfo> RadarData::frames() {
     std::lock_guard<std::mutex> guard(lock);
-    return frameList;
+    std::vector<RadarFrameInfo> recent;
+    if(frameList.empty()) {
+        return recent;
+    }
+    time_t newest = frameList.back().time;
+    for(const RadarFrameInfo &f : frameList) {
+        if(newest - f.time <= 3600) {
+            recent.push_back(f);
+        }
+    }
+    return recent;
 }
 
 void RadarData::want(int z, int x, int y) {

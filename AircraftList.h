@@ -32,6 +32,7 @@
 #include "Aircraft.h"
 
 #include "dump1090.h" //for Modes
+#include "AdsbApi.h"
 
 class AircraftList {
 	public:
@@ -39,6 +40,7 @@ class AircraftList {
 
 		Aircraft *find(uint32_t addr);
 		void update(Modes *modes);
+		void update(const std::vector<struct ApiAircraft> &batch);  // from AdsbApi
 
 		AircraftList();
 		~AircraftList();

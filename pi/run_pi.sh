@@ -12,4 +12,4 @@ cd "$(dirname "$0")/.."
 export SDL_VIDEODRIVER="${SDL_VIDEODRIVER:-kmsdrm}"
 exec ./viz1090 --no-adsb --lat "$LAT" --lon "$LON" --transit --weather \
     --fullscreen --hide-cursor --zoom 1 \
-    --page-times 60,30,cycle "$@"
+    --page-times 60,30,cycle,30 --adsb-api "$@"

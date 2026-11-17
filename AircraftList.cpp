@@ -141,6 +141,60 @@ void AircraftList::update(Modes *modes) {
     }
 }
 
+// Same bookkeeping as above for a batch from an online aggregator. A plane
+// missing from one poll is kept (and fades as usual) rather than dropped,
+// so a single gap doesn't wipe its trail.
+void AircraftList::update(const std::vector<ApiAircraft> &batch) {
+    time_t t = time(NULL);
+    for(const ApiAircraft &a : batch) {
+        Aircraft *p = find(a.addr);
+        if(!p) {
+            p = new Aircraft(a.addr);
+            p->next = head;
+            head = p;
+            p->created = now();
+        }
+        p->live = 1;
+        p->prev_seen = p->seen;
+        p->seen = t;
+        p->msSeen = now();
+        memcpy(p->flight, a.flight, sizeof(p->flight));
+        p->altitude = a.altitude;
+        p->speed = a.speed;
+        p->track = a.track;
+        p->vert_rate = a.vertRate;
+        if(p->lon == a.lon && p->lat == a.lat) {
+            continue;
+        }
+        p->seenLatLon = t;
+        p->msSeenLatLon = now();
+        p->lon = a.lon;
+        p->lat = a.lat;
+        p->lonHistory.push_back(p->lon);
+        p->latHistory.push_back(p->lat);
+        p->headingHistory.push_back(p->track);
+        p->timestampHistory.push_back(p->msSeenLatLon);
+    }
+
+    Aircraft *prev = nullptr;
+    Aircraft *p = head;
+    while(p) {
+        if(t - p->seen > 30) {
+            Aircraft *gone = p;
+            p = p->next;
+            if(prev) {
+                prev->next = p;
+            } else {
+                head = p;
+            }
+            delete gone;
+        } else {
+            prev = p;
+            p = p->next;
+        }
+    }
+}
+
 AircraftList::AircraftList() {
     head = nullptr;
 

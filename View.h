@@ -131,8 +131,23 @@ class View {
 		void draw();
 
 		// pages: the aircraft map, and the TfL transit board
-		enum Page { PAGE_MAP, PAGE_TRANSIT, PAGE_WEATHER };
+		// rotation: map (local, buses) -> departures -> weather -> planes (all
+		// of London), then a zoom back down to the local map
+		enum Page { PAGE_MAP, PAGE_TRANSIT, PAGE_WEATHER, PAGE_PLANES, PAGE_COUNT };
 		Page page;
+		bool planeFeed;                 // aircraft from an online API (--adsb-api)
+		bool havePlanes();              // any aircraft source
+		// the local view to come back to, and the London-wide planes view
+		float homeLat, homeLon, homeDist;
+		float planesLat, planesLon, planesDist;
+		void rememberHome();
+		// a timed camera move between two views (zoom in log space)
+		bool flying;
+		std::chrono::steady_clock::time_point flyStart;
+		float flySeconds;
+		float flyFromLat, flyFromLon, flyFromDist, flyToLat, flyToLon, flyToDist;
+		void flyTo(float lat, float lon, float dist, float seconds);
+		void updateFlight();
 		TransitBoard *transit;          // NULL unless --transit is given
 		WeatherData *weather;           // NULL unless --weather is given
 		RadarData *radar;               // rain radar (with --weather)
@@ -170,7 +185,7 @@ class View {
 		TTF_Font *weatherSmallFont;
 		float rotateSeconds;            // 0 = no automatic page rotation
 		bool usePageTimes;              // --page-times given
-		float pageSeconds[3];           // per page (map, departures, weather); weather 0 = one full cycle
+		float pageSeconds[PAGE_COUNT];  // per page (map, departures, weather, planes); weather 0 = one full cycle
 		float weatherCycleSeconds();
 		float transitScale;             // board text size, multiple of uiUnit (default 1)
 		TTF_Font *transitFont;          // London Underground Regular

@@ -445,7 +445,11 @@ void View::drawStatus() {
     }
 
 
-    if(noAdsb) {
+    if(planeFeed) {
+        char strPlaneCount[10] = " ";
+        snprintf(strPlaneCount, 10, "%d", appData->numVisiblePlanes);
+        drawStatusBox(&left, &top, "adsb.lol", strPlaneCount, style.buttonColor);
+    } else if(noAdsb) {
         // no aircraft source: nothing to report
     } else if(!appData->connected) {
         drawStatusBox(&left,&top,"init", "connecting", style.red);
@@ -1032,7 +1036,14 @@ void View::drawPlanes() {
                     }
 
 
-                    if(outOfBounds(x,y)) {
+                    if(outOfBounds(x,y) && planeFeed) {
+                        // the online feed covers a wide area: planes off the
+                        // screen would just crowd its edges, so leave them out
+                        p->x = x;
+                        p->y = y;
+                        p = p->next;
+                        continue;
+                    } else if(outOfBounds(x,y)) {
                         drawPlaneOffMap(x, y, &(p->x), &(p->y), planeColor);
                     } else {
                         if(elapsed(p->msSeenLatLon) < 500) {
@@ -1335,8 +1346,11 @@ void View::draw() {
     }
  
     // page rotation: per-page times if given (--page-times), else --rotate for all
-    if(transit || weather) {
+    if(transit || weather || havePlanes()) {
         float seconds = usePageTimes ? pageSeconds[page] : rotateSeconds;
+        if(usePageTimes && page == PAGE_PLANES && seconds <= 0) {
+            seconds = 30;
+        }
         if(usePageTimes && page == PAGE_WEATHER && seconds <= 0) {
             seconds = weatherCycleSeconds();  // "cycle": one full pass of the weather segments
         }
@@ -1363,8 +1377,12 @@ void View::draw() {
         return;
     }
 
-    moveMapToTarget();
-    zoomMapToTarget();
+    if(flying) {
+        updateFlight();
+    } else {
+        moveMapToTarget();
+        zoomMapToTarget();
+    }
 
     drawGeography();
     drawRadar();
@@ -1383,7 +1401,7 @@ void View::draw() {
     drawTransitStops();
     drawBuses();
 
-    if(appData->connected) {
+    if(havePlanes()) {
         for(int i = 0; i < 8; i++) {
             // if(resolveLabelConflicts() <  0.001f) {            
             //     break;
@@ -1394,7 +1412,7 @@ void View::draw() {
         drawPlanes();  
     }
 
-    if(transit && miniBoard) {
+    if(transit && miniBoard && page == PAGE_MAP) {
         drawMiniBoard();
     }
 
@@ -1411,33 +1429,96 @@ void View::draw() {
 // Transit page
 //
 
+bool View::havePlanes() {
+    return planeFeed || appData->connected;
+}
+
+void View::rememberHome() {
+    homeLat = centerLat;
+    homeLon = centerLon;
+    homeDist = maxDist;
+}
+
+void View::flyTo(float lat, float lon, float dist, float seconds) {
+    flying = true;
+    flyStart = std::chrono::steady_clock::now();
+    flySeconds = seconds;
+    flyFromLat = centerLat;
+    flyFromLon = centerLon;
+    flyFromDist = maxDist;
+    flyToLat = lat;
+    flyToLon = lon;
+    flyToDist = dist;
+    mapTargetLat = mapTargetLon = mapTargetMaxDist = 0;
+}
+
+void View::updateFlight() {
+    float t = std::chrono::duration<float>(std::chrono::steady_clock::now() - flyStart).count() / flySeconds;
+    if(t >= 1) {
+        t = 1;
+        flying = false;
+    }
+    float e = t * t * (3 - 2 * t);  // ease in and out
+    // the centre settles a little before the zoom does, so it lands on home
+    float c = std::min(1.0f, e * 1.25f);
+    centerLat = flyFromLat + (flyToLat - flyFromLat) * c;
+    centerLon = flyFromLon + (flyToLon - flyFromLon) * c;
+    maxDist = expf(logf(flyFromDist) + (logf(flyToDist) - logf(flyFromDist)) * e);
+    mapAnimating = 1;
+    mapMoved = 1;
+    if(!flying) {
+        mapRedraw = 1;
+    }
+}
+
 void View::showPage(Page newPage) {
-    if((newPage == PAGE_TRANSIT && !transit) || (newPage == PAGE_WEATHER && !weather)) {
+    if((newPage == PAGE_TRANSIT && !transit) || (newPage == PAGE_WEATHER && !weather) ||
+       (newPage == PAGE_PLANES && !havePlanes())) {
         return;
     }
     if(newPage == PAGE_WEATHER && page != PAGE_WEATHER) {
         weatherSegment = 0;  // start the rotation from "Now"
         weatherSegmentShown = std::chrono::steady_clock::now();
     }
+    Page previous = page;
     page = newPage;
     pageShownTime = std::chrono::steady_clock::now();
-    if(page == PAGE_MAP) {
+    if(page == PAGE_PLANES) {
+        // all of London, straight away (we arrive from a full-screen page)
+        flying = false;
+        centerLat = planesLat;
+        centerLon = planesLon;
+        maxDist = planesDist;
+        mapTargetLat = mapTargetLon = mapTargetMaxDist = 0;
+        mapRedraw = 1;
+        mapMoved = 1;
+    } else if(page == PAGE_MAP) {
         mapRedraw = 1;  // the map texture is stale after time away
+        if(previous == PAGE_PLANES) {
+            flyTo(homeLat, homeLon, homeDist, 5.0f);  // zoom down to the buses
+        } else if(previous != PAGE_MAP) {
+            centerLat = homeLat;
+            centerLon = homeLon;
+            maxDist = homeDist;
+            mapMoved = 1;
+        }
     }
 }
 
-// map -> departures -> weather -> map, skipping pages that aren't enabled
+// map -> departures -> weather -> planes -> map, skipping pages that aren't available
 void View::togglePage() {
-    Page order[] = {PAGE_MAP, PAGE_TRANSIT, PAGE_WEATHER};
+    Page order[] = {PAGE_MAP, PAGE_TRANSIT, PAGE_WEATHER, PAGE_PLANES};
+    int count = 4;
     int current = 0;
-    for(int i = 0; i < 3; i++) {
+    for(int i = 0; i < count; i++) {
         if(order[i] == page) {
             current = i;
         }
     }
-    for(int step = 1; step <= 3; step++) {
-        Page next = order[(current + step) % 3];
-        if(next == PAGE_MAP || (next == PAGE_TRANSIT && transit) || (next == PAGE_WEATHER && weather)) {
+    for(int step = 1; step <= count; step++) {
+        Page next = order[(current + step) % count];
+        if(next == PAGE_MAP || (next == PAGE_TRANSIT && transit) || (next == PAGE_WEATHER && weather) ||
+           (next == PAGE_PLANES && havePlanes())) {
             showPage(next);
             return;
         }
@@ -2516,7 +2597,17 @@ View::View(AppData *appData){
     weatherSmallFont        = NULL;
     rotateSeconds           = 0;
     usePageTimes            = false;
-    pageSeconds[0] = pageSeconds[1] = pageSeconds[2] = 0;
+    for(int i = 0; i < PAGE_COUNT; i++) {
+        pageSeconds[i] = 0;
+    }
+    planeFeed               = false;
+    flying                  = false;
+    flySeconds              = 1;
+    homeLat = homeLon = 0;
+    homeDist = 1;
+    planesLat               = 51.505f;  // central London, wide enough for Heathrow to the Thames estuary
+    planesLon               = -0.15f;
+    planesDist              = 32.0f;
     transitScale            = 1.0;
     uiScaleFactor           = 1.0;
     uiUnit                  = 16;
