@@ -40,6 +40,7 @@
 #include <algorithm>
 #include <iostream>
 #include <set>
+#include <strings.h>
 #include <thread>
 
 // Set from a SIGUSR1 handler; the next frame is saved to SNAPSHOT_PATH.
@@ -1764,7 +1765,7 @@ static std::string shortLine(const std::string &line) {
 
 // Stop letter from TfL's indicator ("Stop LJ" -> "LJ"); "stn" for stations.
 static std::string stopCode(const std::string &indicator) {
-    if(indicator.compare(0, 5, "Stop ") == 0) {
+    if(strncasecmp(indicator.c_str(), "Stop ", 5) == 0) {
         return indicator.substr(5);
     }
     return "stn";
@@ -2585,7 +2586,7 @@ void View::drawWalkRoute() {
     // summary box just above the status bar
     std::string name = selectedStop.name;
     std::string id = selectedStop.indicator;
-    if(id.compare(0, 5, "Stop ") == 0) {
+    if(strncasecmp(id.c_str(), "Stop ", 5) == 0) {
         name += " " + id.substr(5);
     }
     std::string message;
@@ -2698,6 +2699,17 @@ void View::drawTransitStops() {
     });
     std::vector<SDL_Rect> placed;
 
+    // every marker on screen, so labels keep off other stops
+    std::vector<SDL_Rect> markerRects;
+    for(const StopMarker &stop : stops) {
+        float dx, dy;
+        int x, y;
+        pxFromLonLat(&dx, &dy, stop.lon, stop.lat);
+        screenCoords(&x, &y, dx, dy);
+        int r = (stop.station ? 3 : 2) * half + 1;
+        markerRects.push_back(SDL_Rect{x - r, y - r, 2 * r, 2 * r});
+    }
+
     for(const StopMarker &stop : stops) {
         float dx, dy;
         int x, y;
@@ -2764,7 +2776,7 @@ void View::drawTransitStops() {
         }
 
         std::string id = stop.indicator;
-        if(id.compare(0, 5, "Stop ") == 0) {
+        if(strncasecmp(id.c_str(), "Stop ", 5) == 0) {
             id = id.substr(5);
         }
         if(stop.station || id.empty()) {
@@ -2775,70 +2787,114 @@ void View::drawTransitStops() {
             }
         }
 
-        // stacked like the plane labels: stop code, then the next two arrivals
-        int tx = x + (stop.station ? 4 * half : half) + mapFontWidth;
-        int ty = y - mapFontHeight / 2;
-
-        // skip the label if it would land on one already drawn
+        // stacked like the plane labels: stop code, name, then the next two arrivals
         int smallH = stopNameFont ? stopNameFontHeight : mapFontHeight;
         bool showName = !stop.station && stopNameFont;
-        int labelW = 8 * mapFontWidth;
-        if(showName) {
-            int nameW = 0, nameH = 0;
-            TTF_SizeUTF8(stopNameFont, stop.name.c_str(), &nameW, &nameH);
-            labelW = std::max(labelW, nameW);
-        } else if(stop.station) {
-            int nameW = 0, nameH = 0;
-            TTF_SizeUTF8(mapBoldFont, id.c_str(), &nameW, &nameH);
-            labelW = std::max(labelW, nameW);
-        }
-        SDL_Rect box = {tx, ty, labelW, 3 * mapFontHeight + (showName ? smallH : 0)};
-        bool collides = false;
-        for(const SDL_Rect &other : placed) {
-            if(SDL_HasIntersection(&box, &other)) {
-                collides = true;
-                break;
-            }
-        }
-        if(collides && !selected) {
-            continue;
-        }
-        placed.push_back(box);
-
-        text.setFont(mapBoldFont);
-        text.setColor(fade(style.labelColor));
-        text.setPosition(tx, ty);
-        text.setText(id);
-        text.draw(renderer);
-        ty += mapFontHeight;
-
-        // full stop name in small type under the code
-        if(showName) {
-            text.setFont(stopNameFont);
-            text.setColor(fade(style.grey));
-            text.setPosition(tx, ty);
-            text.setText(stop.name);
-            text.draw(renderer);
-            ty += smallH;
-        }
-        text.setFont(mapFont);
-
-        int shown = 0;
+        std::vector<std::pair<std::string, SDL_Color>> arrivals;
         for(const auto &arrival : stop.next) {
             int mins = std::chrono::duration_cast<std::chrono::seconds>(arrival.second - now).count() / 60;
             if(mins < 0) {
                 continue;
             }
-            std::string s = shortLine(arrival.first) + " " + std::to_string(mins) + "m";
             // dim the ones you can't walk to in time
-            text.setColor(fade(mins <= stop.walkMinutes ? style.grey_dark : style.subLabelColor));
-            text.setPosition(tx, ty);
-            text.setText(s);
-            text.draw(renderer);
-            ty += mapFontHeight;
-            if(++shown >= 2) {
+            arrivals.push_back(std::make_pair(shortLine(arrival.first) + " " + std::to_string(mins) + "m",
+                                              fade(mins <= stop.walkMinutes ? style.grey_dark : style.subLabelColor)));
+            if(arrivals.size() >= 2) {
                 break;
             }
+        }
+        auto widthOf = [](TTF_Font *f, const std::string &str) {
+            int w = 0, h = 0;
+            if(f) {
+                TTF_SizeUTF8(f, str.c_str(), &w, &h);
+            }
+            return w;
+        };
+        int idW = widthOf(mapBoldFont, id);
+        int nameW = showName ? widthOf(stopNameFont, stop.name) : 0;
+        int labelW = std::max(idW, nameW);
+        for(const auto &a : arrivals) {
+            labelW = std::max(labelW, widthOf(mapFont, a.first));
+        }
+        int labelH = (1 + (int)arrivals.size()) * mapFontHeight + (showName ? smallH : 0);
+
+        // Try the kerb side first: buses drive on the left, so the stop is on
+        // the left of the way its arrow points, and the stop across the road
+        // labels its own side. Then the other sides, before giving up.
+        int gap = (stop.station ? 4 * half : 2 * half) + mapFontWidth / 2;
+        float lx = 1, ly = 0;  // default: to the right
+        if(heading >= 0 && !stop.station) {
+            float hx = sin(heading * M_PI / 180.0f);
+            float hy = -cos(heading * M_PI / 180.0f);
+            lx = hy;
+            ly = -hx;
+        }
+        enum Side { RIGHT, LEFT, ABOVE, BELOW };
+        Side first = fabsf(lx) >= fabsf(ly) ? (lx < 0 ? LEFT : RIGHT) : (ly < 0 ? ABOVE : BELOW);
+        Side opposite = first == LEFT ? RIGHT : first == RIGHT ? LEFT : first == ABOVE ? BELOW : ABOVE;
+        std::vector<Side> sides = {first, opposite};
+        for(Side sd : {RIGHT, LEFT, ABOVE, BELOW}) {
+            if(sd != first && sd != opposite) {
+                sides.push_back(sd);
+            }
+        }
+        auto boxFor = [&](Side sd) {
+            switch(sd) {
+                case LEFT:  return SDL_Rect{x - gap - labelW, y - mapFontHeight / 2, labelW, labelH};
+                case ABOVE: return SDL_Rect{x - labelW / 2, y - gap - labelH, labelW, labelH};
+                case BELOW: return SDL_Rect{x - labelW / 2, y + gap, labelW, labelH};
+                default:    return SDL_Rect{x + gap, y - mapFontHeight / 2, labelW, labelH};
+            }
+        };
+        auto clear = [&](const SDL_Rect &b) {
+            if(b.x < 0 || b.y < 0 || b.x + b.w > screen_width || b.y + b.h > screen_height) {
+                return false;
+            }
+            for(const SDL_Rect &other : placed) {
+                if(SDL_HasIntersection(&b, &other)) {
+                    return false;
+                }
+            }
+            for(const SDL_Rect &m : markerRects) {
+                if(!(m.x <= x && x <= m.x + m.w && m.y <= y && y <= m.y + m.h) && SDL_HasIntersection(&b, &m)) {
+                    return false;  // someone else's marker
+                }
+            }
+            return true;
+        };
+        SDL_Rect box = boxFor(first);
+        Side side = first;
+        bool found = false;
+        for(Side sd : sides) {
+            if(clear(boxFor(sd))) {
+                box = boxFor(sd);
+                side = sd;
+                found = true;
+                break;
+            }
+        }
+        if(!found && !selected) {
+            continue;
+        }
+        placed.push_back(box);
+
+        // on the left, lines end at the stop; elsewhere they start from it
+        int ty = box.y;
+        auto put = [&](TTF_Font *f, const std::string &str, SDL_Color c, int lineH) {
+            int lx0 = side == LEFT ? box.x + box.w - widthOf(f, str) : box.x;
+            text.setFont(f);
+            text.setColor(c);
+            text.setPosition(lx0, ty);
+            text.setText(str);
+            text.draw(renderer);
+            ty += lineH;
+        };
+        put(mapBoldFont, id, fade(style.labelColor), mapFontHeight);
+        if(showName) {
+            put(stopNameFont, stop.name, fade(style.grey), smallH);  // full name in small type
+        }
+        for(const auto &a : arrivals) {
+            put(mapFont, a.first, a.second, mapFontHeight);
         }
     }
 
