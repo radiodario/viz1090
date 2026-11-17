@@ -121,13 +121,6 @@ public:
 	QuadTree root;
 	QuadTree airport_root;
 
-	// OpenStreetMap layers from getosm.py (optional files)
-	QuadTree road_major_root;
-	QuadTree road_minor_root;
-	QuadTree rail_root;
-	QuadTree water_root;
-	int loadLayer(const char *path, QuadTree *tree);
-
 	bool QTInsert(QuadTree *tree, Line *line, int depth);
 	std::vector<Line*> getLinesRecursive(QuadTree *tree, float screen_lat_min, float screen_lat_max, float screen_lon_min, float screen_lon_max);
 	std::vector<Line*> getLines(float screen_lat_min, float screen_lat_max, float screen_lon_min, float screen_lon_max);

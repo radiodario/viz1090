@@ -398,62 +398,9 @@ void Map::load() {
 
   infile.close();
 
-  loadLayer("water.bin", &water_root);
-  loadLayer("roads_minor.bin", &road_minor_root);
-  loadLayer("roads_major.bin", &road_major_root);
-  loadLayer("rail.bin", &rail_root);
-
   printf("done\n");
 
   loaded = 100;
-}
-
-// Load a polyline file (float32 lon,lat pairs, 0,0 between polylines) into a
-// quadtree. Missing files are fine: the layer just stays empty.
-int Map::loadLayer(const char *path, QuadTree *tree) {
-  FILE *f = fopen(path, "rb");
-  if(!f) {
-    return 0;
-  }
-
-  fseek(f, 0, SEEK_END);
-  long count = ftell(f) / sizeof(float);
-  rewind(f);
-
-  std::vector<float> pts(count);
-  if(count == 0 || fread(pts.data(), sizeof(float), count, f) != (size_t)count) {
-    fclose(f);
-    printf("Could not read %s\n", path);
-    return 0;
-  }
-  fclose(f);
-
-  for(long i = 0; i + 1 < count; i += 2) {
-    if(pts[i] == 0 && pts[i + 1] == 0) {
-      continue;
-    }
-    tree->lon_min = std::min(tree->lon_min, pts[i]);
-    tree->lon_max = std::max(tree->lon_max, pts[i]);
-    tree->lat_min = std::min(tree->lat_min, pts[i + 1]);
-    tree->lat_max = std::max(tree->lat_max, pts[i + 1]);
-  }
-
-  int segments = 0;
-  for(long i = 0; i + 3 < count; i += 2) {
-    if((pts[i] == 0 && pts[i + 1] == 0) || (pts[i + 2] == 0 && pts[i + 3] == 0)) {
-      continue;
-    }
-    Point a, b;
-    a.lon = pts[i];
-    a.lat = pts[i + 1];
-    b.lon = pts[i + 2];
-    b.lat = pts[i + 3];
-    QTInsert(tree, new Line(a, b), 0);
-    segments++;
-  }
-
-  printf("Read %d segments from %s\n", segments, path);
-  return segments;
 }
 
 Map::Map() {

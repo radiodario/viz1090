@@ -713,16 +713,16 @@ void View::drawLines(int left, int top, int right, int bottom, int bailTime) {
     const float MAJOR_ROADS_MAX_DIST_KM = 12.0f;
     const float RAIL_WATER_MAX_DIST_KM = 15.0f;
     if(maxDist < RAIL_WATER_MAX_DIST_KM) {
-        drawLinesRecursive(&(map.water_root), screen_lat_min, screen_lat_max, screen_lon_min, screen_lon_max, style.waterColor);
+        drawOsmLayer(OSM_WATER, screen_lat_min, screen_lat_max, screen_lon_min, screen_lon_max, style.waterColor);
     }
     if(maxDist < MINOR_ROADS_MAX_DIST_KM) {
-        drawLinesRecursive(&(map.road_minor_root), screen_lat_min, screen_lat_max, screen_lon_min, screen_lon_max, style.roadMinorColor);
+        drawOsmLayer(OSM_ROADS_MINOR, screen_lat_min, screen_lat_max, screen_lon_min, screen_lon_max, style.roadMinorColor);
     }
     if(maxDist < MAJOR_ROADS_MAX_DIST_KM) {
-        drawLinesRecursive(&(map.road_major_root), screen_lat_min, screen_lat_max, screen_lon_min, screen_lon_max, style.roadMajorColor);
+        drawOsmLayer(OSM_ROADS_MAJOR, screen_lat_min, screen_lat_max, screen_lon_min, screen_lon_max, style.roadMajorColor);
     }
     if(maxDist < RAIL_WATER_MAX_DIST_KM) {
-        drawLinesRecursive(&(map.rail_root), screen_lat_min, screen_lat_max, screen_lon_min, screen_lon_max, style.railColor);
+        drawOsmLayer(OSM_RAIL, screen_lat_min, screen_lat_max, screen_lon_min, screen_lon_max, style.railColor);
     }
 
     drawLinesRecursive(&(map.root), screen_lat_min, screen_lat_max, screen_lon_min, screen_lon_max, style.geoColor);
@@ -730,6 +730,35 @@ void View::drawLines(int left, int top, int right, int bottom, int bailTime) {
     drawLinesRecursive(&(map.airport_root), screen_lat_min, screen_lat_max, screen_lon_min, screen_lon_max, style.airportColor);
 
     drawTrails(left, top, right, bottom);
+}
+
+// One OpenStreetMap layer from the tiles in view; points are lon,lat pairs
+// with a NaN pair between polylines.
+void View::drawOsmLayer(int layer, float lat_min, float lat_max, float lon_min, float lon_max, SDL_Color color) {
+    float latLo = std::min(lat_min, lat_max), latHi = std::max(lat_min, lat_max);
+    float lonLo = std::min(lon_min, lon_max), lonHi = std::max(lon_min, lon_max);
+
+    for(const OsmTile *tile : osmTiles.visible(latLo, latHi, lonLo, lonHi)) {
+        const std::vector<float> &pts = tile->pts[layer];
+        bool havePrev = false;
+        int px = 0, py = 0;
+        for(size_t i = 0; i + 1 < pts.size(); i += 2) {
+            if(std::isnan(pts[i])) {
+                havePrev = false;
+                continue;
+            }
+            float dx, dy;
+            int x, y;
+            pxFromLonLat(&dx, &dy, pts[i], pts[i + 1]);
+            screenCoords(&x, &y, dx, dy);
+            if(havePrev && (x != px || y != py) && !(outOfBounds(x, y) && outOfBounds(px, py))) {
+                lineRGBA(renderer, px, py, x, y, color.r, color.g, color.b, 255);
+            }
+            px = x;
+            py = y;
+            havePrev = true;
+        }
+    }
 }
 
 void View::drawLinesRecursive(QuadTree *tree, float screen_lat_min, float screen_lat_max, float screen_lon_min, float screen_lon_max, SDL_Color color) {
@@ -849,6 +878,17 @@ void View::drawPlaceNames() {
 }
 
 void View::drawGeography() {
+    // street detail for whatever is on screen, once zoomed in far enough to show it
+    const float OSM_FETCH_MAX_DIST_KM = 8.0f;
+    if(maxDist < OSM_FETCH_MAX_DIST_KM) {
+        float latA, lonA, latB, lonB;
+        latLonFromScreenCoords(&latA, &lonA, 0, 0);
+        latLonFromScreenCoords(&latB, &lonB, screen_width, screen_height);
+        osmTiles.want(std::min(latA, latB), std::max(latA, latB), std::min(lonA, lonB), std::max(lonA, lonB));
+    }
+    if(osmTiles.poll()) {
+        mapRedraw = 1;
+    }
 
     if((mapRedraw && !mapMoved) || (mapAnimating && elapsed(lastRedraw) > 8 * FRAMETIME) ||  elapsed(lastRedraw) > 2000 || (map.loaded < 100 && elapsed(lastRedraw) > 250)) {
 
@@ -2015,7 +2055,7 @@ void View::drawMiniBoard() {
 // bearing of the nearest OSM road, picking whichever way along the road is
 // closest to TfL's heading. Cached per stop once the map has loaded.
 float View::stopArrowHeading(const StopMarker &stop) {
-    if(stop.heading < 0 || map.loaded < 100) {
+    if(stop.heading < 0) {
         return stop.heading;
     }
 
@@ -2032,31 +2072,41 @@ float View::stopArrowHeading(const StopMarker &stop) {
     float dLat = SEARCH_M / M_PER_DEG;
     float dLon = SEARCH_M / (M_PER_DEG * cosLat);
 
-    std::vector<Line*> lines = map.getLinesRecursive(&map.road_major_root, stop.lat - dLat, stop.lat + dLat, stop.lon - dLon, stop.lon + dLon);
-    std::vector<Line*> minor = map.getLinesRecursive(&map.road_minor_root, stop.lat - dLat, stop.lat + dLat, stop.lon - dLon, stop.lon + dLon);
-    lines.insert(lines.end(), minor.begin(), minor.end());
+    // street tiles around the stop; until they arrive, use TfL's compass point
+    std::vector<const OsmTile *> near = osmTiles.visible(stop.lat - dLat, stop.lat + dLat, stop.lon - dLon, stop.lon + dLon);
+    if(near.empty()) {
+        return stop.heading;
+    }
 
     float best = SEARCH_M;
     float roadBearing = 0;
     bool foundRoad = false;
-    for(Line *line : lines) {
-        // local metres, stop at the origin
-        float ax = (line->start.lon - stop.lon) * cosLat * M_PER_DEG;
-        float ay = (line->start.lat - stop.lat) * M_PER_DEG;
-        float bx = (line->end.lon - stop.lon) * cosLat * M_PER_DEG;
-        float by = (line->end.lat - stop.lat) * M_PER_DEG;
-        float vx = bx - ax, vy = by - ay;
-        float len2 = vx * vx + vy * vy;
-        if(len2 < 1.0f) {
-            continue;
-        }
-        float t = std::max(0.0f, std::min(1.0f, -(ax * vx + ay * vy) / len2));
-        float px = ax + t * vx, py = ay + t * vy;
-        float dist = sqrtf(px * px + py * py);
-        if(dist < best) {
-            best = dist;
-            roadBearing = atan2f(vx, vy) * 180.0f / M_PI;  // degrees from north
-            foundRoad = true;
+    for(const OsmTile *tile : near) {
+        for(int layer : {OSM_ROADS_MAJOR, OSM_ROADS_MINOR}) {
+            const std::vector<float> &pts = tile->pts[layer];
+            for(size_t i = 0; i + 3 < pts.size(); i += 2) {
+                if(std::isnan(pts[i]) || std::isnan(pts[i + 2])) {
+                    continue;
+                }
+                // local metres, stop at the origin
+                float ax = (pts[i] - stop.lon) * cosLat * M_PER_DEG;
+                float ay = (pts[i + 1] - stop.lat) * M_PER_DEG;
+                float bx = (pts[i + 2] - stop.lon) * cosLat * M_PER_DEG;
+                float by = (pts[i + 3] - stop.lat) * M_PER_DEG;
+                float vx = bx - ax, vy = by - ay;
+                float len2 = vx * vx + vy * vy;
+                if(len2 < 1.0f) {
+                    continue;
+                }
+                float t = std::max(0.0f, std::min(1.0f, -(ax * vx + ay * vy) / len2));
+                float px = ax + t * vx, py = ay + t * vy;
+                float dist = sqrtf(px * px + py * py);
+                if(dist < best) {
+                    best = dist;
+                    roadBearing = atan2f(vx, vy) * 180.0f / M_PI;  // degrees from north
+                    foundRoad = true;
+                }
+            }
         }
     }
 

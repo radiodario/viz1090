@@ -11,6 +11,10 @@ Writes viz1090's map format (float32 lon,lat pairs, polylines separated by
     airportdata.bin   runways (wider radius, see --airport-radius)
     airportnames      airport IATA codes, "lon lat CODE" per line
 
+viz1090 now loads street detail itself, as vector tiles for whatever is on
+screen (see OsmTiles.cpp), and ignores the four street files: this script is
+only needed for airportdata.bin and airportnames.
+
 Uses only the Python standard library, so it runs as-is on a Raspberry Pi.
 Map data (c) OpenStreetMap contributors, ODbL.
 

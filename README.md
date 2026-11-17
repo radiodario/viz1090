@@ -157,7 +157,9 @@ The board uses the [London Underground dot-matrix typeface](https://github.com/p
 
 ### OPENSTREETMAP LAYERS
 
-`getosm.py --lat LAT --lon LON --radius 4` downloads roads, railways and water around a point (plus runways and airport codes within `--airport-radius`, default 60 km) from OpenStreetMap via Overpass, and writes `roads_major.bin`, `roads_minor.bin`, `rail.bin`, `water.bin`, `airportdata.bin` and `airportnames`. viz1090 draws them under the base map when present. Map data © OpenStreetMap contributors, ODbL.
+Street detail (roads, railways, water) loads by itself for whatever part of the map is on screen, anywhere in the world: viz1090 fetches standard vector tiles from [OpenFreeMap](https://openfreemap.org) as you pan and keeps them in `~/.cache/viz1090/osm`, so each area is downloaded once. Map data © OpenMapTiles, © OpenStreetMap contributors, ODbL.
+
+`getosm.py --lat LAT --lon LON` is now only needed for runways and airport codes within `--airport-radius` (default 60 km): it writes `airportdata.bin` and `airportnames`. The street files it also writes are no longer read.
 
 ### HACKRF
 
