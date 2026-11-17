@@ -5,7 +5,18 @@
 set -e
 cd "$(dirname "$0")/.."
 TARGET="${1:-pi@vizpi.local}"
-SSH="ssh -o BatchMode=yes -o ProxyJump=none -i $HOME/.ssh/id_ed25519_vizpi"
+SSH="ssh -o BatchMode=yes -o ProxyJump=none -o ConnectTimeout=15 -i $HOME/.ssh/id_ed25519_vizpi"
+
+# ssh's own .local (mDNS) lookups are flaky on this Mac: resolve once, then
+# connect by address, still checking the host key saved under the name
+HOST="${TARGET#*@}"
+if [[ "$HOST" == *.local ]]; then
+    IP=$(dscacheutil -q host -a name "$HOST" | awk '/^ip_address: [0-9.]+$/ {print $2; exit}')
+    if [ -n "$IP" ]; then
+        SSH="$SSH -o HostKeyAlias=$HOST"
+        TARGET="${TARGET%@*}@$IP"
+    fi
+fi
 
 # separate tree so the Mac's own objects never mix with the Pi's
 mkdir -p build-pi
