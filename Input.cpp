@@ -31,6 +31,14 @@
 
 #include "Input.h"
 
+#include <cmath>
+
+// Finger events also arrive from laptop trackpads, in trackpad coordinates:
+// only a real touchscreen should pan or tap the map that way.
+static bool isTouchscreen(SDL_TouchID id) {
+	return SDL_GetTouchDeviceType(id) == SDL_TOUCH_DEVICE_DIRECT;
+}
+
 static std::chrono::high_resolution_clock::time_point now() {
     return std::chrono::high_resolution_clock::now();
 }
@@ -127,15 +135,15 @@ void Input::getInput()
 
 			break;
 
-			case SDL_MOUSEWHEEL:
-				view->maxDist *= 1.0 + 0.5 * sgn(event.wheel.y);
-				if(view->maxDist < 0.001f) {
-					view->maxDist = 0.001f;
-				}
-
-				view->mapTargetMaxDist = 0;
-				view->mapMoved = 1;
+			case SDL_MOUSEWHEEL: {
+				// like a web map in a browser (natural scrolling and all):
+				// scroll up to zoom in, about the pointer
+				float steps = event.wheel.preciseY;
+				int mx, my;
+				SDL_GetMouseState(&mx, &my);
+				view->zoomAbout(mx * view->pixel_ratio, my * view->pixel_ratio, powf(1.25f, -steps));
 				break;
+			}
 
 			case SDL_MULTIGESTURE:
 				view->maxDist /=1.0 + 4.0*event.mgesture.dDist;
@@ -148,6 +156,9 @@ void Input::getInput()
 				break;
 
 			case SDL_FINGERMOTION:;	
+				if(!isTouchscreen(event.tfinger.touchId)) {
+					break;
+				}
 				if(elapsed(touchDownTime) > 150) {
 					tapCount = 0;
 					//touchDownTime = 0;
@@ -156,6 +167,9 @@ void Input::getInput()
 				break;
 
 			case SDL_FINGERDOWN:
+				if(!isTouchscreen(event.tfinger.touchId)) {
+					break;
+				}
 				if(elapsed(touchDownTime) > 500) {
 					tapCount = 0;
 				} 
@@ -168,6 +182,9 @@ void Input::getInput()
 				break;
 
 			case SDL_FINGERUP:
+				if(!isTouchscreen(event.tfinger.touchId)) {
+					break;
+				}
 				if(elapsed(touchDownTime) < 150 && SDL_GetNumTouchFingers(event.tfinger.touchId) == 0) {
 					touchx = view->screen_width * event.tfinger.x;
 					touchy = view->screen_height * event.tfinger.y;

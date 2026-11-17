@@ -1134,7 +1134,7 @@ void View::animateCenterAbsolute(float x, float y) {
 
     float outLat = dy * (1.0/6371.0) * (180.0f / M_PI);
 
-    float outLon = dx * (1.0/6371.0) * (180.0f / M_PI) / cos(((centerLat)/2.0f) * M_PI / 180.0f);
+    float outLon = dx * (1.0/6371.0) * (180.0f / M_PI) / cos(centerLat * M_PI / 180.0f);
 
     mapTargetLon = centerLon - outLon;
     mapTargetLat = centerLat - outLat;
@@ -1156,7 +1156,7 @@ void View::moveCenterAbsolute(float x, float y) {
 
     float outLat = dy * (1.0/6371.0) * (180.0f / M_PI);
 
-    float outLon = dx * (1.0/6371.0) * (180.0f / M_PI) / cos(((centerLat)/2.0f) * M_PI / 180.0f);
+    float outLon = dx * (1.0/6371.0) * (180.0f / M_PI) / cos(centerLat * M_PI / 180.0f);
 
     centerLon += outLon;
     centerLat += outLat;
@@ -1166,6 +1166,21 @@ void View::moveCenterAbsolute(float x, float y) {
 
     mapMoved = 1;
     highFramerate = true;
+}
+
+// Zoom by factor (<1 zooms in) keeping the point under (x, y) where it is.
+void View::zoomAbout(int x, int y, float factor) {
+    float lat, lon;
+    latLonFromScreenCoords(&lat, &lon, x, y);
+    maxDist = std::max(0.001f, std::min(20000.0f, maxDist * factor));
+    mapTargetMaxDist = 0;
+
+    float dx, dy;
+    int nx, ny;
+    pxFromLonLat(&dx, &dy, lon, lat);
+    screenCoords(&nx, &ny, dx, dy);
+    moveCenterRelative(x - nx, y - ny);
+    mapMoved = 1;
 }
 
 void View::moveCenterRelative(float dx, float dy) {
@@ -1182,7 +1197,7 @@ void View::moveCenterRelative(float dx, float dy) {
 
     float outLat = dy * (1.0/6371.0) * (180.0f / M_PI);
 
-    float outLon = dx * (1.0/6371.0) * (180.0f / M_PI) / cos(((centerLat)/2.0f) * M_PI / 180.0f);
+    float outLon = dx * (1.0/6371.0) * (180.0f / M_PI) / cos(centerLat * M_PI / 180.0f);
     
     centerLon += outLon;
     centerLat += outLat;

@@ -130,6 +130,7 @@ class View {
 		void drawClick();
 		void registerClick(int tapcount, int x, int y);
 		void registerMouseMove(int x, int y);
+		void zoomAbout(int x, int y, float factor);
 		void draw();
 
 		// pages: the aircraft map, and the TfL transit board
